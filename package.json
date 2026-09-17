@@ -1,0 +1,45 @@
+{
+  "name": "accountapp",
+  "version": "1.0.0",
+  "description": "Coffee Arrival Tracking & Accounting Desktop Application",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "npm run dev:renderer",
+    "dev:renderer": "vite",
+    "electron:dev": "concurrently \"npm run dev:renderer\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build",
+    "electron:build": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "electron": "^28.2.0",
+    "mongoose": "^8.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.359.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron-builder": "^24.9.1",
+    "vite": "^5.2.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.company.coffeetracker",
+    "productName": "CoffeeTracker ERP",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  }
+}

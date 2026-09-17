@@ -1,0 +1,85 @@
+{
+  "suppliers": [],
+  "products": [
+    {
+      "id": "prod_rc_raw",
+      "code": "RC_RAW",
+      "name": "RC Raw",
+      "isMain": true,
+      "description": "Robusta Cherry Raw Coffee"
+    },
+    {
+      "id": "prod_rc_ep",
+      "code": "RC_EP",
+      "name": "RC EP",
+      "isMain": true,
+      "description": "Robusta Cherry Clean / End Product"
+    },
+    {
+      "id": "prod_ac_raw",
+      "code": "AC_RAW",
+      "name": "AC Raw",
+      "isMain": true,
+      "description": "Arabica Cherry Raw Coffee"
+    },
+    {
+      "id": "prod_rc_a",
+      "code": "RC_A",
+      "name": "RC A",
+      "isMain": false,
+      "description": "Robusta Cherry A Grade"
+    },
+    {
+      "id": "prod_rc_b",
+      "code": "RC_B",
+      "name": "RC B",
+      "isMain": false,
+      "description": "Robusta Cherry B Grade"
+    },
+    {
+      "id": "prod_rc_c",
+      "code": "RC_C",
+      "name": "RC C",
+      "isMain": false,
+      "description": "Robusta Cherry C Grade"
+    },
+    {
+      "id": "prod_rc_aa",
+      "code": "RC_AA",
+      "name": "RC AA",
+      "isMain": false,
+      "description": "Robusta Cherry AA Grade"
+    },
+    {
+      "id": "prod_rc_pb",
+      "code": "RC_PB",
+      "name": "RC PB",
+      "isMain": false,
+      "description": "Robusta Cherry Peaberry"
+    },
+    {
+      "id": "prod_rc_og",
+      "code": "RC_OG",
+      "name": "RC OG",
+      "isMain": false,
+      "description": "Robusta Cherry Ongoing/Other"
+    },
+    {
+      "id": "prod_rc_bits",
+      "code": "RC_BITS",
+      "name": "RC Bits",
+      "isMain": false,
+      "description": "Robusta Cherry Bits / Blacks"
+    }
+  ],
+  "arrivals": [],
+  "commitments": [],
+  "settlements": [],
+  "payments": [],
+  "settings": {
+    "mongoUri": "mongodb://127.0.0.1:27017/coffeetracker",
+    "defaultTcsRate": 0.1,
+    "companyName": "Coffee Trading & Processing Co.",
+    "autoBagsWeight": 50
+  }
+}
