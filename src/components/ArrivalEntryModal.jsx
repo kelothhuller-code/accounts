@@ -255,7 +255,7 @@ export default function ArrivalEntryModal({
       sgstRate: numSgst,
       igstRate: numIgst,
       tdsRate: numTds,
-      tcsRate: numTcsRate,
+      tcsRate: numTcs,
       commitmentId: rateType === 'commitment' ? commitmentId : null,
       remarks
     };
