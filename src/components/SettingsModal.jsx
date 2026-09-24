@@ -97,7 +97,22 @@ export default function SettingsModal({ isOpen, onClose }) {
     reader.readAsText(file);
   };
 
-  if (!isOpen) return null;
+  const handleClearLocal = async () => {
+    if (!window.confirm('Clear local database cache and re-fetch clean data from MongoDB?')) return;
+    setConnecting(true);
+    try {
+      const res = await dbAction('db:clear-local');
+      setStatus(res);
+      setMessage('Local database cache cleared! Re-synchronized clean state from MongoDB.');
+      setIsError(false);
+      setTimeout(() => window.location.reload(), 800);
+    } catch (e) {
+      setIsError(true);
+      setMessage('Failed to clear cache: ' + e.message);
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -142,6 +157,19 @@ export default function SettingsModal({ isOpen, onClose }) {
                 </button>
               </div>
             </form>
+
+            <div style={{ marginTop: '0.75rem', paddingTop: '0.65rem', borderTop: '1px dashed #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.78rem', color: '#64748b' }}>Stale Local Cache Conflict?</span>
+              <button 
+                type="button" 
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: '0.75rem', color: '#dc2626', borderColor: '#fca5a5' }}
+                onClick={handleClearLocal}
+                disabled={connecting}
+              >
+                <RefreshCw size={12} /> Clear Local Cache & Sync MongoDB
+              </button>
+            </div>
 
             {message && (
               <div style={{ marginTop: '0.65rem', padding: '0.5rem', borderRadius: '6px', fontSize: '0.78rem', background: isError ? '#fef2f2' : '#ecfdf5', color: isError ? '#b91c1c' : '#047857', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>

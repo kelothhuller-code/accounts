@@ -159,8 +159,8 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
 
       if (!matchesSearch) return false;
 
-      if (partyTypeFilter === 'suppliers') return s.totalPurchasesBilled > 0 || s.netPayable > 0;
-      if (partyTypeFilter === 'buyers') return s.totalSalesBilled > 0 || s.netPayable < 0;
+      if (partyTypeFilter === 'suppliers') return s.totalPurchasesBilled > 0 || s.netPayable > 0 || (s.totalSalesBilled === 0 && s.totalPurchasesBilled === 0);
+      if (partyTypeFilter === 'buyers') return s.totalSalesBilled > 0 || s.netPayable < 0 || (s.totalSalesBilled === 0 && s.totalPurchasesBilled === 0);
 
       return true;
     })

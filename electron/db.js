@@ -611,11 +611,37 @@ const dbController = {
 
   async updateMongoUri(uri) {
     dbState.settings.mongoUri = uri;
+    // Clear local cached collections so old local state doesn't pollute new Mongo database
+    dbState.suppliers = [];
+    dbState.arrivals = [];
+    dbState.dispatches = [];
+    dbState.commitments = [];
+    dbState.settlements = [];
+    dbState.payments = [];
+    dbState.epTransfers = [];
+    dbState.commitmentWashes = [];
     saveLocalDb();
+
     if (mongoose.connection.readyState !== 0) {
       await mongoose.disconnect();
     }
     await initMongo(uri);
+    return dbController.getStatus();
+  },
+
+  async clearLocalData() {
+    dbState.suppliers = [];
+    dbState.arrivals = [];
+    dbState.dispatches = [];
+    dbState.commitments = [];
+    dbState.settlements = [];
+    dbState.payments = [];
+    dbState.epTransfers = [];
+    dbState.commitmentWashes = [];
+    saveLocalDb();
+    if (isMongoConnected) {
+      await loadFromMongo();
+    }
     return dbController.getStatus();
   },
 
@@ -697,11 +723,18 @@ const dbController = {
       createdAt: new Date().toISOString()
     };
     dbState.suppliers.push(newSupplier);
-    saveLocalDb();
-    if (isMongoConnected && MongoSupplier) {
-      MongoSupplier.create(newSupplier).catch(e => console.error(e));
+    try {
+      const summary = calculateSupplierLedger(id);
+      saveLocalDb();
+      if (isMongoConnected && MongoSupplier) {
+        MongoSupplier.create(newSupplier).catch(e => console.error(e));
+      }
+      return summary;
+    } catch (err) {
+      const idx = dbState.suppliers.findIndex(s => s.id === id);
+      if (idx !== -1) dbState.suppliers.splice(idx, 1);
+      throw err;
     }
-    return calculateSupplierLedger(id);
   },
 
   updateSupplier(id, data) {

@@ -156,6 +156,9 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'db:set-mongo-uri':
         return await dbController.updateMongoUri(payload.uri);
 
+      case 'db:clear-local':
+        return await dbController.clearLocalData();
+
       // PRODUCTS
       case 'products:get':
         return dbController.getProducts();
