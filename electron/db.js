@@ -342,41 +342,16 @@ async function loadFromMongo() {
       MongoCommitmentWash.find({}).lean(),
     ]);
 
-    if (sups.length > 0 || arrs.length > 0 || disps.length > 0 || comms.length > 0) {
-      const supplierMap = new Map(dbState.suppliers.map(s => [s.id, s]));
-      sups.forEach(s => { delete s._id; delete s.__v; supplierMap.set(s.id, s); });
-      dbState.suppliers = Array.from(supplierMap.values());
+    dbState.suppliers = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
+    dbState.arrivals = (arrs || []).map(a => { delete a._id; delete a.__v; return a; });
+    dbState.dispatches = (disps || []).map(d => { delete d._id; delete d.__v; return d; });
+    dbState.commitments = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
+    dbState.settlements = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
+    dbState.payments = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
+    dbState.epTransfers = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
+    dbState.commitmentWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
 
-      const arrivalMap = new Map(dbState.arrivals.map(a => [a.id, a]));
-      arrs.forEach(a => { delete a._id; delete a.__v; arrivalMap.set(a.id, a); });
-      dbState.arrivals = Array.from(arrivalMap.values());
-
-      const dispatchMap = new Map(dbState.dispatches.map(d => [d.id, d]));
-      disps.forEach(d => { delete d._id; delete d.__v; dispatchMap.set(d.id, d); });
-      dbState.dispatches = Array.from(dispatchMap.values());
-
-      const commitmentMap = new Map(dbState.commitments.map(c => [c.id, c]));
-      comms.forEach(c => { delete c._id; delete c.__v; commitmentMap.set(c.id, c); });
-      dbState.commitments = Array.from(commitmentMap.values());
-
-      const settlementMap = new Map(dbState.settlements.map(st => [st.id, st]));
-      sets.forEach(st => { delete st._id; delete st.__v; settlementMap.set(st.id, st); });
-      dbState.settlements = Array.from(settlementMap.values());
-
-      const paymentMap = new Map(dbState.payments.map(p => [p.id, p]));
-      pays.forEach(p => { delete p._id; delete p.__v; paymentMap.set(p.id, p); });
-      dbState.payments = Array.from(paymentMap.values());
-
-      const trfMap = new Map(dbState.epTransfers.map(t => [t.id, t]));
-      trfs.forEach(t => { delete t._id; delete t.__v; trfMap.set(t.id, t); });
-      dbState.epTransfers = Array.from(trfMap.values());
-
-      const washMap = new Map(dbState.commitmentWashes.map(w => [w.id, w]));
-      washes.forEach(w => { delete w._id; delete w.__v; washMap.set(w.id, w); });
-      dbState.commitmentWashes = Array.from(washMap.values());
-
-      saveLocalDb();
-    }
+    saveLocalDb();
   } catch (err) {
     console.error('Error loading data from MongoDB:', err);
   }
@@ -426,6 +401,15 @@ function calculateSupplierLedger(supplierId) {
   const commitments = (dbState.commitments || []).filter(c => c.supplierId === supplierId || c.partyId === supplierId);
   const epTransfers = (dbState.epTransfers || []).filter(t => t.fromPartyId === supplierId || t.toPartyId === supplierId);
   const washes = (dbState.commitmentWashes || []).filter(w => w.supplierId === supplierId || w.partyId === supplierId);
+
+  // Financial Ledger tracking
+  let totalPurchasesBilled = 0;
+  let totalSalesBilled = 0;
+  let totalCgst = 0;
+  let totalSgst = 0;
+  let totalIgst = 0;
+  let totalTdsDeducted = 0;
+  let totalTcsDeducted = 0;
 
   // Physical Coffee Stock tracking
   let totalRawWeight = 0;
@@ -512,6 +496,10 @@ function calculateSupplierLedger(supplierId) {
     totalTdsDeducted += (Number(set.tdsAmount) || 0);
   });
 
+  // Net Stored Stock calculation before EP Transfers
+  let storageBags = Math.max(0, (Number(supplier.openingStorageBags) || 0) + storeInBags - storeOutBags);
+  let storageEndProduct = Math.max(0, (Number(supplier.openingStorageEP) || 0) + storeInEP - storeOutEP);
+
   // 4. Process EP Stock Transfers
   let epTransferredOut = 0;
   let epTransferredIn = 0;
@@ -559,9 +547,7 @@ function calculateSupplierLedger(supplierId) {
     openingBal = Math.abs(openingBal);  // We owe party
   }
 
-  // Net Stored Stock
-  let storageBags = Math.max(0, (Number(supplier.openingStorageBags) || 0) + storeInBags - storeOutBags);
-  let storageEndProduct = Math.max(0, (Number(supplier.openingStorageEP) || 0) + storeInEP - storeOutEP);
+  // Net Stored Stock calculation
   const storageAvgOutturn = storageBags > 0 ? (storageEndProduct / storageBags) : 0;
 
   const netPayable = openingBal + totalPurchasesBilled - totalSalesBilled - totalPaid + totalReceived + transferFinancialNet + washAdjustmentAmount;
