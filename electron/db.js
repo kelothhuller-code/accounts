@@ -99,8 +99,21 @@ function loadLocalDb() {
   }
 }
 
-// Save local DB file
+function hasConfiguredMongoUri() {
+  const uri = dbState.settings && dbState.settings.mongoUri;
+  return !!(uri && typeof uri === 'string' && uri.trim() !== '' && uri.trim().toLowerCase() !== 'standalone');
+}
+
+function ensureDatabaseReady() {
+  if (hasConfiguredMongoUri() && !isMongoConnected) {
+    const detail = mongoError ? `: ${mongoError}` : '';
+    throw new Error(`MongoDB Connection Problem${detail}. A MongoDB URI is configured, but the database connection is offline. Operations are suspended to prevent local storage drift.`);
+  }
+}
+
+// Save local DB file (bypassed when MongoDB URI is configured)
 function saveLocalDb() {
+  if (hasConfiguredMongoUri()) return;
   try {
     fs.writeFileSync(localDbFile, JSON.stringify(dbState, null, 2), 'utf8');
   } catch (err) {
@@ -684,10 +697,12 @@ const dbController = {
 
   // SUPPLIERS & PARTIES
   getSuppliers() {
+    ensureDatabaseReady();
     return dbState.suppliers.map(sup => calculateSupplierLedger(sup.id));
   },
 
   getSupplierDetails(supplierId) {
+    ensureDatabaseReady();
     const summary = calculateSupplierLedger(supplierId);
     if (!summary) return null;
 
@@ -712,6 +727,7 @@ const dbController = {
   },
 
   addSupplier(data) {
+    ensureDatabaseReady();
     const trimmedName = (data.name || '').trim();
     if (!trimmedName) throw new Error('Supplier/Party name is required.');
 
@@ -819,6 +835,7 @@ const dbController = {
 
   // COMMITMENTS (PURCHASE & SALES)
   getCommitments(supplierId = null) {
+    ensureDatabaseReady();
     let list = dbState.commitments;
     if (supplierId) {
       list = list.filter(c => c.supplierId === supplierId || c.partyId === supplierId);
@@ -827,6 +844,7 @@ const dbController = {
   },
 
   addCommitment(data) {
+    ensureDatabaseReady();
     const id = 'com_' + Date.now();
     const count = dbState.commitments.length + 1;
     const category = data.category || 'purchase'; // 'purchase' or 'sale'
@@ -854,7 +872,7 @@ const dbController = {
     dbState.commitments.push(newCommitment);
     saveLocalDb();
     if (isMongoConnected && MongoCommitment) {
-      MongoCommitment.create(newCommitment).catch(e => console.error(e));
+      MongoCommitment.findOneAndUpdate({ id }, newCommitment, { upsert: true }).catch(e => console.error(e));
     }
     return newCommitment;
   },
@@ -915,6 +933,7 @@ const dbController = {
 
   // COMMITMENT WASH / SETTLEMENT AGAINST OPPOSITE COMMITMENT
   washCommitments(washData) {
+    ensureDatabaseReady();
     const {
       supplierId,
       supplierName,
@@ -997,12 +1016,13 @@ const dbController = {
     dbState.commitmentWashes.push(newWash);
     saveLocalDb();
     if (isMongoConnected && MongoCommitmentWash) {
-      MongoCommitmentWash.create(newWash).catch(e => console.error(e));
+      MongoCommitmentWash.findOneAndUpdate({ id }, newWash, { upsert: true }).catch(e => console.error(e));
     }
     return newWash;
   },
 
   getCommitmentWashes(supplierId = null) {
+    ensureDatabaseReady();
     let list = dbState.commitmentWashes || [];
     if (supplierId) {
       list = list.filter(w => w.supplierId === supplierId || w.partyId === supplierId);
@@ -1012,6 +1032,7 @@ const dbController = {
 
   // ARRIVALS (PURCHASES & STORE IN)
   getArrivals(filter = {}) {
+    ensureDatabaseReady();
     let list = dbState.arrivals.slice();
     if (filter.supplierId) {
       list = list.filter(a => a.supplierId === filter.supplierId);
@@ -1032,6 +1053,7 @@ const dbController = {
   },
 
   addArrival(data) {
+    ensureDatabaseReady();
     const id = 'arr_' + Date.now();
     const count = dbState.arrivals.length + 1;
     const arrivalNo = 'ARR-' + String(count).padStart(4, '0');
@@ -1160,7 +1182,7 @@ const dbController = {
     dbState.arrivals.push(newArrival);
     saveLocalDb();
     if (isMongoConnected && MongoArrival) {
-      MongoArrival.create(newArrival).catch(e => console.error(e));
+      MongoArrival.findOneAndUpdate({ id }, newArrival, { upsert: true }).catch(e => console.error(e));
     }
     return newArrival;
   },
@@ -1297,6 +1319,7 @@ const dbController = {
 
   // DISPATCHES (SALES & HUSK DISPATCHES)
   getDispatches(filter = {}) {
+    ensureDatabaseReady();
     let list = (dbState.dispatches || []).slice();
     if (filter.supplierId || filter.partyId) {
       const pid = filter.supplierId || filter.partyId;
@@ -1321,6 +1344,7 @@ const dbController = {
   },
 
   addDispatch(data) {
+    ensureDatabaseReady();
     const id = 'disp_' + Date.now();
     const count = dbState.dispatches.length + 1;
     const dispatchType = data.dispatchType || (data.product === 'prod_husk' || data.product === 'Husk' ? 'husk' : 'coffee');
@@ -1441,7 +1465,7 @@ const dbController = {
     dbState.dispatches.push(newDispatch);
     saveLocalDb();
     if (isMongoConnected && MongoDispatch) {
-      MongoDispatch.create(newDispatch).catch(e => console.error(e));
+      MongoDispatch.findOneAndUpdate({ id }, newDispatch, { upsert: true }).catch(e => console.error(e));
     }
     return newDispatch;
   },
@@ -1559,6 +1583,7 @@ const dbController = {
 
   // EP (END PRODUCT) TRANSFERS BETWEEN PARTIES
   getEpTransfers(supplierId = null) {
+    ensureDatabaseReady();
     let list = dbState.epTransfers || [];
     if (supplierId) {
       list = list.filter(t => t.fromPartyId === supplierId || t.toPartyId === supplierId);
@@ -1567,6 +1592,7 @@ const dbController = {
   },
 
   addEpTransfer(data) {
+    ensureDatabaseReady();
     const fromParty = dbState.suppliers.find(s => s.id === data.fromPartyId);
     const toParty = dbState.suppliers.find(s => s.id === data.toPartyId);
 
@@ -1605,7 +1631,7 @@ const dbController = {
     dbState.epTransfers.push(newTransfer);
     saveLocalDb();
     if (isMongoConnected && MongoEpTransfer) {
-      MongoEpTransfer.create(newTransfer).catch(e => console.error(e));
+      MongoEpTransfer.findOneAndUpdate({ id }, newTransfer, { upsert: true }).catch(e => console.error(e));
     }
     return newTransfer;
   },
@@ -1767,12 +1793,13 @@ const dbController = {
     dbState.settlements.push(newSettlement);
     saveLocalDb();
     if (isMongoConnected && MongoSettlement) {
-      MongoSettlement.create(newSettlement).catch(e => console.error(e));
+      MongoSettlement.findOneAndUpdate({ id }, newSettlement, { upsert: true }).catch(e => console.error(e));
     }
     return newSettlement;
   },
 
   getSettlements(supplierId = null) {
+    ensureDatabaseReady();
     let list = dbState.settlements;
     if (supplierId) {
       list = list.filter(s => s.supplierId === supplierId);
@@ -1859,6 +1886,7 @@ const dbController = {
 
   // PAYMENTS
   getPayments(supplierId = null) {
+    ensureDatabaseReady();
     let list = dbState.payments;
     if (supplierId) {
       list = list.filter(p => p.supplierId === supplierId);
@@ -1867,6 +1895,7 @@ const dbController = {
   },
 
   addPayment(data) {
+    ensureDatabaseReady();
     const id = 'pay_' + Date.now();
     const count = dbState.payments.length + 1;
     const paymentNo = 'PAY-' + String(count).padStart(4, '0');
@@ -1888,7 +1917,7 @@ const dbController = {
     dbState.payments.push(newPayment);
     saveLocalDb();
     if (isMongoConnected && MongoPayment) {
-      MongoPayment.create(newPayment).catch(e => console.error(e));
+      MongoPayment.findOneAndUpdate({ id }, newPayment, { upsert: true }).catch(e => console.error(e));
     }
     return newPayment;
   },
