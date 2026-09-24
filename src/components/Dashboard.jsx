@@ -33,6 +33,7 @@ export default function Dashboard({ onOpenNewArrival, onEditArrival, onSelectSup
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
+  const [insight, setInsight] = useState(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -73,12 +74,14 @@ export default function Dashboard({ onOpenNewArrival, onEditArrival, onSelectSup
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [mets, arrs] = await Promise.all([
+      const [mets, arrs, ins] = await Promise.all([
         dbAction('dashboard:metrics', { startDate, endDate }),
-        dbAction('arrivals:get', { startDate, endDate })
+        dbAction('arrivals:get', { startDate, endDate }),
+        dbAction('stock:requirement-insight')
       ]);
       if (mets) setMetrics(mets);
       if (arrs) setArrivals(arrs || []);
+      if (ins) setInsight(ins);
     } catch (e) {
       console.error(e);
     } finally {
@@ -215,6 +218,70 @@ export default function Dashboard({ onOpenNewArrival, onEditArrival, onSelectSup
         </div>
       </div>
 
+      {/* Coffee Stock & Position Requirement Insight Widget */}
+      {insight && (
+        <div style={{
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+          color: '#ffffff',
+          borderRadius: '10px',
+          padding: '1.25rem 1.5rem',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          border: '1px solid #334155'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '1.2rem' }}>🎯</span>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#f8fafc' }}>
+                Coffee Requirement & Stock Position Insight
+              </h3>
+            </div>
+            <span className={`badge ${insight.actionNeeded === 'BUY_COFFEE' ? 'badge-danger' : insight.actionNeeded === 'SELL_COFFEE' ? 'badge-success' : 'badge-secondary'}`} style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
+              {insight.actionNeeded === 'BUY_COFFEE' ? '⚠️ SHORT POSITION: Need to BUY Coffee' : insight.actionNeeded === 'SELL_COFFEE' ? '🚀 LONG POSITION: Need to SELL Coffee' : '✅ BALANCED STOCK POSITION'}
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '0.75rem', textAlign: 'center', fontSize: '0.8rem' }}>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>Open Stock</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{insight.openingCoffeeEP.toLocaleString()} kg</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>+ Arrivals</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#4ade80' }}>+{insight.totalArrivalEP.toLocaleString()} kg</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>- Dispatches</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#f87171' }}>-{insight.totalDispatchEP.toLocaleString()} kg</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>- Store In</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fbbf24' }}>-{insight.totalStoreInEP.toLocaleString()} kg</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>+ Store Out</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#38bdf8' }}>+{insight.totalStoreOutEP.toLocaleString()} kg</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>+ Pur. Comms</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#a78bfa' }}>+{insight.purchaseCommitmentsPendingEP.toLocaleString()} kg</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '6px' }}>
+              <div style={{ color: '#94a3b8' }}>- Sale Comms</div>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#f472b6' }}>-{insight.saleCommitmentsPendingEP.toLocaleString()} kg</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontSize: '0.82rem', color: '#cbd5e1' }}>
+              Formula: <em>Opening Stock + Total Arrival - Total Dispatch - Total Store In + Total Store Out + Pur. Comms Pending - Sale Comms Pending</em>
+            </div>
+            <div style={{ fontSize: '1.25rem', fontWeight: 800, color: insight.netPositionEP >= 0 ? '#4ade80' : '#f87171' }}>
+              Net Position: {insight.netPositionEP >= 0 ? `+${insight.netPositionEP.toLocaleString()} kg EP` : `${insight.netPositionEP.toLocaleString()} kg EP`}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Daily Aggregated Metrics Bar (Exact User Request) */}
       <div>
         <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#475569', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
@@ -271,12 +338,12 @@ export default function Dashboard({ onOpenNewArrival, onEditArrival, onSelectSup
           </div>
 
           <div style={{ borderRight: '1px solid #e2e8f0', paddingRight: '1rem' }}>
-            <span className="calc-item-label">Pending Storage Coffee</span>
+            <span className="calc-item-label">Net Storage Coffee Stock</span>
             <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#7c3aed' }}>
-              {global.totalStorageBags} Bags
+              {global.totalStorageBags || 0} Bags
             </div>
             <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-              {global.totalStorageEP.toLocaleString()} kg EP awaiting rate fix
+              In: {global.totalStoreInBags || 0}b | Out: {global.totalStoreOutBags || 0}b ({(global.totalStorageEP || 0).toLocaleString()} kg EP)
             </span>
           </div>
 

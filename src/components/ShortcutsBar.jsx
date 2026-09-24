@@ -4,12 +4,14 @@ export default function ShortcutsBar() {
   const shortcuts = [
     { key: 'F1 / Alt+D', label: 'Dashboard' },
     { key: 'F2 / Alt+A', label: 'New Arrival' },
+    { key: 'F10 / Alt+K', label: 'Dispatches' },
     { key: 'F3 / Alt+S', label: 'Suppliers' },
     { key: 'F4 / Alt+W', label: 'Settle Storage' },
     { key: 'F5 / Alt+P', label: 'Payments' },
     { key: 'F6 / Alt+C', label: 'Commitments' },
     { key: 'F7 / Alt+R', label: 'Reports' },
     { key: 'F8', label: 'Add Commodity' },
+    { key: 'F9', label: 'New Party' },
     { key: 'Alt+E', label: 'Export CSV' },
     { key: 'Esc', label: 'Close Modal' },
   ];

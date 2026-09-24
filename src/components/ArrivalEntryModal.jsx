@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Check, Plus, AlertCircle, Edit2 } from 'lucide-react';
 import { dbAction } from '../utils/api';
+import SearchableSupplierSelect from './SearchableSupplierSelect';
+import SearchableProductSelect from './SearchableProductSelect';
 
-export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledSupplierId = null, arrivalToEdit = null }) {
+export default function ArrivalEntryModal({
+  isOpen,
+  onClose,
+  onSaved,
+  prefilledSupplierId = null,
+  arrivalToEdit = null,
+  onOpenNewSupplier,
+  dataVersion = 0,
+  lastAddedSupplier = null
+}) {
   const isEditMode = !!arrivalToEdit;
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -31,7 +42,12 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
   const [commitmentId, setCommitmentId] = useState('');
   const [rateUnit, setRateUnit] = useState('per_kg_ep'); // 'per_kg_ep' or 'per_bag'
   const [rate, setRate] = useState('');
-  const [tcsRate, setTcsRate] = useState('0.1'); // 0.1%
+  const [billType, setBillType] = useState('gst_bill'); // 'gst_bill' or 'cash_bill'
+  const [cgstRate, setCgstRate] = useState(0);
+  const [sgstRate, setSgstRate] = useState(0);
+  const [igstRate, setIgstRate] = useState(0);
+  const [tdsRate, setTdsRate] = useState(0);
+  const [tcsRate, setTcsRate] = useState(0.1);
   const [remarks, setRemarks] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -57,7 +73,13 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
     setRateType(arr.rateType || 'fixed');
     setRateUnit(arr.rateUnit || 'per_kg_ep');
     setRate(String(arr.rate || ''));
-    setTcsRate(String(arr.tcsRate || '0.1'));
+    setBillType(arr.billType || 'gst_bill');
+    const isHusk = (arr.product || '').toLowerCase().includes('husk');
+    setCgstRate(arr.cgstRate !== undefined ? arr.cgstRate : (isHusk ? 2.5 : 0));
+    setSgstRate(arr.sgstRate !== undefined ? arr.sgstRate : (isHusk ? 2.5 : 0));
+    setIgstRate(arr.igstRate !== undefined ? arr.igstRate : 0);
+    setTdsRate(arr.tdsRate !== undefined ? arr.tdsRate : 0);
+    setTcsRate(arr.tcsRate !== undefined ? arr.tcsRate : 0.1);
     setRemarks(arr.remarks || '');
     if (arr.commitmentId) setCommitmentId(arr.commitmentId);
   };
@@ -75,7 +97,14 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
         if (firstInputRef.current) firstInputRef.current.focus();
       }, 100);
     }
-  }, [isOpen, prefilledSupplierId, arrivalToEdit]);
+  }, [isOpen, prefilledSupplierId, arrivalToEdit, dataVersion]);
+
+  useEffect(() => {
+    if (lastAddedSupplier && isOpen) {
+      setSupplierId(lastAddedSupplier.id);
+      loadData();
+    }
+  }, [lastAddedSupplier]);
 
   useEffect(() => {
     if (supplierId) {
@@ -101,7 +130,7 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
   const loadSupplierCommitments = async (sId) => {
     try {
       const list = await dbAction('commitments:get', { supplierId: sId });
-      const active = (list || []).filter(c => c.status === 'active' && c.remainingQty > 0);
+      const active = (list || []).filter(c => (c.category === 'purchase' || !c.category) && c.status === 'active' && c.remainingQty > 0);
       setCommitments(active);
       if (active.length > 0 && rateType === 'commitment') {
         setCommitmentId(active[0].id);
@@ -112,7 +141,6 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
     }
   };
 
-  // Handle Weight change -> auto calculate bags (weight / 50)
   const handleWeightChange = (e) => {
     const val = e.target.value;
     setWeight(val);
@@ -130,46 +158,45 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
   const numBags = parseFloat(bags) || 0;
   const numOutturn = parseFloat(outturn) || 0;
   const numRate = parseFloat(rate) || 0;
-  const numTcsRate = parseFloat(tcsRate) || 0;
 
-  // Calculate End Product
+  const numCgst = billType === 'gst_bill' ? (parseFloat(cgstRate) || 0) : 0;
+  const numSgst = billType === 'gst_bill' ? (parseFloat(sgstRate) || 0) : 0;
+  const numIgst = billType === 'gst_bill' ? (parseFloat(igstRate) || 0) : 0;
+  const numTds = parseFloat(tdsRate) || 0;
+  const numTcs = parseFloat(tcsRate) || 0;
+
+  // End Product
   let endProductWeight = 0;
   if (numWeight > 0 && numOutturn > 0) {
     if (outturnType === 'percentage') {
       endProductWeight = numWeight * (numOutturn / 100);
     } else {
-      // In 50kg bag basis: (weight / 50) * outturn_kg
       endProductWeight = (numWeight / 50) * numOutturn;
     }
   }
   endProductWeight = Math.round(endProductWeight * 100) / 100;
-
-  // Calculate Outturn percentage for reference
   const outturnPercentage = numWeight > 0 ? ((endProductWeight / numWeight) * 100).toFixed(2) : 0;
 
-  // Gross Bill Amount: ALWAYS endProductWeight * rate (even for bags-rate commitment)
-  // Bags quantity is only used for commitment deduction, NOT for billing calculation
-  let billAmount = 0;
-  if (rateType !== 'storage') {
-    billAmount = endProductWeight * numRate;
-  }
-  billAmount = Math.round(billAmount * 100) / 100;
+  // Billing
+  let taxableAmount = rateType === 'storage' ? 0 : Math.round((endProductWeight * numRate) * 100) / 100;
+  let calcCgst = Math.round((taxableAmount * (numCgst / 100)) * 100) / 100;
+  let calcSgst = Math.round((taxableAmount * (numSgst / 100)) * 100) / 100;
+  let calcIgst = Math.round((taxableAmount * (numIgst / 100)) * 100) / 100;
+  let billAmount = Math.round((taxableAmount + calcCgst + calcSgst + calcIgst) * 100) / 100;
 
-  // TCS deduction against purchase payment
-  const tcsAmount = Math.round((billAmount * (numTcsRate / 100)) * 100) / 100;
-  const netAmount = Math.round((billAmount - tcsAmount) * 100) / 100;
+  let tdsAmount = Math.round((taxableAmount * (numTds / 100)) * 100) / 100;
+  let tcsAmount = Math.round((taxableAmount * (numTcs / 100)) * 100) / 100;
+  let netAmount = Math.round((billAmount - tdsAmount + tcsAmount) * 100) / 100;
 
-  // Handle Commitment selection
   const handleCommitmentSelect = (cId) => {
     setCommitmentId(cId);
-    const selectedCom = commitments.find(c => c.id === cId);
-    if (selectedCom) {
-      setRate(selectedCom.rate);
-      setRateUnit(selectedCom.type === 'bags' ? 'per_bag' : 'per_kg_ep');
+    const selected = commitments.find(c => c.id === cId);
+    if (selected) {
+      setRate(selected.rate);
+      setRateUnit(selected.type === 'bags' ? 'per_bag' : 'per_kg_ep');
     }
   };
 
-  // Quick Inline Add Supplier
   const handleQuickAddSupplier = async () => {
     if (!newSupplierName.trim()) return;
     try {
@@ -223,6 +250,11 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
       rateType,
       rateUnit,
       rate: rateType === 'storage' ? 0 : numRate,
+      billType,
+      cgstRate: numCgst,
+      sgstRate: numSgst,
+      igstRate: numIgst,
+      tdsRate: numTds,
       tcsRate: numTcsRate,
       commitmentId: rateType === 'commitment' ? commitmentId : null,
       remarks
@@ -252,12 +284,11 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '820px' }} onClick={e => e.stopPropagation()}>
+      <div className="modal-content" style={{ maxWidth: '840px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title">
             <span style={{ fontSize: '1.3rem' }}>{isEditMode ? '✏️' : '🚛'}</span>
-            <span>{isEditMode ? `Edit Arrival — ${arrivalToEdit?.arrivalNo}` : 'Record Coffee Arrival'}</span>
-            <span className="badge badge-coffee" style={{ marginLeft: '0.5rem' }}>Enter ↵ to save</span>
+            <span>{isEditMode ? `Edit Arrival — ${arrivalToEdit?.arrivalNo}` : 'Record Coffee Arrival (Purchase / Store In)'}</span>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose}>
             <X size={16} />
@@ -272,44 +303,31 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
             </div>
           )}
 
-          {isEditMode && (arrivalToEdit?.settledBags > 0 || arrivalToEdit?.status === 'settled') && (
-            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '0.65rem', borderRadius: '6px', fontSize: '0.82rem' }}>
-              ⚠️ This arrival has settled quantities. Weight changes are blocked. You can edit date, vehicle, product, rate, and remarks.
-            </div>
-          )}
-
           {/* Supplier & Vehicle */}
           <div className="form-grid" style={{ gridTemplateColumns: '1.4fr 1fr 1fr' }}>
             <div className="form-group">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <label className="form-label">Supplier Account *</label>
-                {!isEditMode && (
-                <button
-                  type="button"
-                  style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
-                  onClick={() => setShowAddSupplierInline(!showAddSupplierInline)}
-                >
-                  {showAddSupplierInline ? 'Cancel' : '+ Quick Add'}
-                </button>
+                {!isEditMode && onOpenNewSupplier && (
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                    onClick={onOpenNewSupplier}
+                  >
+                    + New Supplier (F9)
+                  </button>
                 )}
               </div>
 
               {!showAddSupplierInline ? (
-                <select
-                  ref={firstInputRef}
-                  className="form-control"
+                <SearchableSupplierSelect
+                  suppliers={suppliers}
                   value={supplierId}
-                  onChange={e => setSupplierId(e.target.value)}
-                  required
+                  onChange={(sId) => setSupplierId(sId)}
+                  onAddNewSupplier={onOpenNewSupplier}
                   disabled={isEditMode}
-                >
-                  <option value="">-- Select Supplier --</option>
-                  {suppliers.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.place ? `(${s.place})` : ''}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Type supplier name, place, phone..."
+                />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', background: '#eff6ff', padding: '0.5rem', borderRadius: '6px' }}>
                   <input
@@ -364,54 +382,19 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
             </div>
           </div>
 
-          {/* Product Selection */}
+          {/* Commodity Product Selection */}
           <div className="form-group">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label className="form-label">Coffee Product / Commodity *</label>
-              <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Click to select</span>
-            </div>
-
-            {/* Main 3 Products Highlighted */}
-            <div className="product-chips">
-              {mainProducts.map(p => (
-                <div
-                  key={p}
-                  className={`product-chip main-highlight ${(!isCustomProduct && product === p) ? 'selected' : ''}`}
-                  onClick={() => { setProduct(p); setIsCustomProduct(false); }}
-                >
-                  ⭐ {p} (Main)
-                </div>
-              ))}
-
-              {standardProducts.map(p => (
-                <div
-                  key={p}
-                  className={`product-chip ${(!isCustomProduct && product === p) ? 'selected' : ''}`}
-                  onClick={() => { setProduct(p); setIsCustomProduct(false); }}
-                >
-                  {p}
-                </div>
-              ))}
-
-              <div
-                className={`product-chip ${isCustomProduct ? 'selected' : ''}`}
-                onClick={() => setIsCustomProduct(true)}
-              >
-                ✏️ Other / Custom
-              </div>
-            </div>
-
-            {isCustomProduct && (
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Type Commodity Name (e.g. Arabica Parchment, Robusta Blacks)..."
-                value={customProduct}
-                onChange={e => setCustomProduct(e.target.value)}
-                style={{ marginTop: '0.5rem' }}
-                autoFocus
-              />
-            )}
+            <label className="form-label">Coffee Product / Commodity *</label>
+            <SearchableProductSelect
+              value={product}
+              onChange={(pCode, pObj) => {
+                setProduct(pCode);
+                if (pObj && pObj.cgstRate !== undefined) setCgstRate(pObj.cgstRate);
+                if (pObj && pObj.sgstRate !== undefined) setSgstRate(pObj.sgstRate);
+              }}
+              category="coffee"
+              placeholder="Search or select coffee commodity..."
+            />
           </div>
 
           {/* Weight, Bags, Outturn Calculations */}
@@ -427,20 +410,18 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
                 onChange={handleWeightChange}
                 required
               />
-              <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Total Gross Weight</span>
             </div>
 
             <div className="form-group">
-              <label className="form-label">Bags (Auto: Weight ÷ 50)</label>
+              <label className="form-label">Bags (Weight ÷ 50)</label>
               <input
                 type="number"
                 step="any"
                 className="form-control num-input"
-                placeholder="Auto 50kg bags"
+                placeholder="Auto bags"
                 value={bags}
                 onChange={e => setBags(e.target.value)}
               />
-              <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Standard 50kg Bags</span>
             </div>
 
             <div className="form-group">
@@ -467,13 +448,10 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
                 type="number"
                 step="any"
                 className="form-control num-input"
-                placeholder={outturnType === 'per_50kg' ? 'e.g. 26 (kg per 50kg bag)' : 'e.g. 52 (%)'}
+                placeholder={outturnType === 'per_50kg' ? 'e.g. 26' : 'e.g. 52 (%)'}
                 value={outturn}
                 onChange={e => setOutturn(e.target.value)}
               />
-              <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                {outturnType === 'per_50kg' ? 'Kg end product obtained per 50kg bag' : '% of end product yield'}
-              </span>
             </div>
           </div>
 
@@ -494,13 +472,10 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
             <div className="calc-item" style={{ borderLeft: '2px solid #d97706', paddingLeft: '0.75rem' }}>
               <span className="calc-item-label">End Product (EP)</span>
               <span className="calc-item-val highlight">{endProductWeight.toLocaleString()} kg</span>
-              <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                {(endProductWeight / 100).toFixed(2)} Quintals / {(endProductWeight / 50).toFixed(1)} Clean Bags
-              </span>
             </div>
           </div>
 
-          {/* Rate & Settlement Options */}
+          {/* Rate, GST & Settlement Options */}
           <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem' }}>
             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
@@ -528,7 +503,7 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
                     }
                   }}
                 />
-                From Supplier Commitment ({commitments.length} Active)
+                From Purchase Commitment ({commitments.length} Active)
               </label>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', color: '#92400e' }}>
@@ -545,65 +520,55 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
 
             {rateType === 'storage' ? (
               <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '0.75rem', borderRadius: '6px', fontSize: '0.82rem' }}>
-                <strong>Storage Coffee Note:</strong> This arrival will be added to <strong>{suppliers.find(s => s.id === supplierId)?.name || 'Supplier'}</strong>'s account as storage without billing. You can settle it later (individually or batch settle together with other storage arrivals by average outturn) using the <em>Settle Storage</em> wizard.
+                <strong>Storage Coffee Note:</strong> Added as storage without immediate billing. Settle rate later via Storage Settlement.
               </div>
             ) : (
               <div>
                 {rateType === 'commitment' && (
                   <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-                    <label className="form-label">Select Commitment</label>
-                    {commitments.length === 0 ? (
-                      <div style={{ color: '#dc2626', fontSize: '0.8rem' }}>
-                        No active commitments found for this supplier. Please add one in Commitments tab or choose "Fix Rate Now".
-                      </div>
-                    ) : (
-                      <select
-                        className="form-control"
-                        value={commitmentId}
-                        onChange={e => handleCommitmentSelect(e.target.value)}
-                      >
-                        {commitments.map(c => (
-                          <option key={c.id} value={c.id}>
-                            {c.commitmentNo} - {c.product} ({c.remainingQty} {c.type} remaining @ ₹{c.rate}/{c.type === 'bags' ? 'Bag' : 'Kg EP'})
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                    <label className="form-label">Select Purchase Commitment</label>
+                    <select
+                      className="form-control"
+                      value={commitmentId}
+                      onChange={e => handleCommitmentSelect(e.target.value)}
+                    >
+                      {commitments.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.commitmentNo} - {c.product} ({c.remainingQty} {c.type} @ ₹{c.rate})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 )}
 
                 <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
                   <div className="form-group">
-                    <label className="form-label">Rate Unit</label>
-                    <select
-                      className="form-control"
-                      value={rateUnit}
-                      onChange={e => setRateUnit(e.target.value)}
-                      disabled={rateType === 'commitment'}
-                    >
-                      <option value="per_kg_ep">Rate per Kg End Product (Standard)</option>
-                      <option value="per_bag">Rate per Bag — billed on EP qty</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Rate (₹) *</label>
+                    <label className="form-label">Purchase Rate (₹/kg EP) *</label>
                     <input
                       type="number"
                       step="any"
                       className="form-control num-input"
-                      placeholder={rateUnit === 'per_bag' ? '₹ per bag (billed on EP)' : '₹ per kg EP'}
+                      placeholder="Rate per kg EP"
                       value={rate}
                       onChange={e => setRate(e.target.value)}
                       required={rateType !== 'storage'}
                     />
-                    {rateUnit === 'per_bag' && (
-                      <span style={{ fontSize: '0.7rem', color: '#92400e' }}>⚠️ Billing = EP × Rate</span>
-                    )}
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">TCS Deduction (%)</label>
+                    <label className="form-label">Bill Type</label>
+                    <select
+                      className="form-control"
+                      value={billType}
+                      onChange={(e) => setBillType(e.target.value)}
+                    >
+                      <option value="gst_bill">GST Bill (Tax Invoice)</option>
+                      <option value="cash_bill">Cash Purchase / Regular (No GST)</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">TCS % (u/s 206C)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -612,23 +577,40 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
                       value={tcsRate}
                       onChange={e => setTcsRate(e.target.value)}
                     />
-                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>TCS on Purchase</span>
                   </div>
                 </div>
 
-                {/* Calculation breakdown */}
-                <div style={{ marginTop: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.75rem 1rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                {/* Tax Breakdown Controls */}
+                {billType === 'gst_bill' && (
+                  <div className="form-grid-3" style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px dashed #cbd5e1' }}>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.8rem' }}>CGST %</label>
+                      <input type="number" step="0.1" className="form-control form-control-sm" value={cgstRate} onChange={e => setCgstRate(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.8rem' }}>SGST %</label>
+                      <input type="number" step="0.1" className="form-control form-control-sm" value={sgstRate} onChange={e => setSgstRate(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
+                      <input type="number" step="0.01" className="form-control form-control-sm" value={tdsRate} onChange={e => setTdsRate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Calculation summary */}
+                <div style={{ marginTop: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', color: '#fff', padding: '0.75rem 1rem', borderRadius: '6px' }}>
                   <div>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>EP ({endProductWeight} kg) × ₹{numRate}: </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)' }}>₹{billAmount.toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Taxable: </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)' }}>₹{taxableAmount.toLocaleString()}</strong>
                   </div>
                   <div>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>TCS ({numTcsRate}%): </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', color: '#dc2626' }}>- ₹{tcsAmount.toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GST: </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', color: '#38bdf8' }}>+₹{(calcCgst + calcSgst + calcIgst).toLocaleString()}</strong>
                   </div>
                   <div>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Net Payable to Supplier: </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', color: '#059669' }}>₹{netAmount.toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Net Payable: </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', color: '#4ade80' }}>₹{netAmount.toLocaleString()}</strong>
                   </div>
                 </div>
               </div>
@@ -640,7 +622,7 @@ export default function ArrivalEntryModal({ isOpen, onClose, onSaved, prefilledS
             <input
               type="text"
               className="form-control"
-              placeholder="e.g. Lot #12, Moisture 11.5%, Estate Lot A"
+              placeholder="e.g. Lot #12, Moisture 11.5%"
               value={remarks}
               onChange={e => setRemarks(e.target.value)}
             />

@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, CheckSquare, Square, AlertCircle, Check, RefreshCw, Handshake } from 'lucide-react';
+import { Layers, CheckSquare, Square, AlertCircle, Check, RefreshCw, Handshake, PackageCheck, Truck } from 'lucide-react';
 import { dbAction } from '../utils/api';
+import SearchableSupplierSelect from './SearchableSupplierSelect';
 
-export default function SettlementWizard({ prefilledSupplierId = null, onSettled, dataVersion = 0 }) {
+export default function SettlementWizard({ prefilledSupplierId = null, onSettled, dataVersion = 0, onOpenNewSupplier }) {
   const [suppliers, setSuppliers] = useState([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState(prefilledSupplierId || '');
-  const [storageArrivals, setStorageArrivals] = useState([]);
-  const [selectedArrivalIds, setSelectedArrivalIds] = useState([]);
+  
+  // Category Mode: 'purchase_storage' (Store In Arrivals) vs 'sales_storage' (Store Out Dispatches)
+  const [settlementCategory, setSettlementCategory] = useState('purchase_storage');
+
+  const [storageItems, setStorageItems] = useState([]);
+  const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [commitments, setCommitments] = useState([]);
   
   // Rate & Commitment mode
@@ -32,14 +37,14 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
 
   useEffect(() => {
     if (selectedSupplierId) {
-      loadStorageArrivals(selectedSupplierId);
-      loadSupplierCommitments(selectedSupplierId);
+      loadStorageItems(selectedSupplierId, settlementCategory);
+      loadSupplierCommitments(selectedSupplierId, settlementCategory);
     } else {
-      setStorageArrivals([]);
-      setSelectedArrivalIds([]);
+      setStorageItems([]);
+      setSelectedItemIds([]);
       setCommitments([]);
     }
-  }, [selectedSupplierId, dataVersion]);
+  }, [selectedSupplierId, settlementCategory, dataVersion]);
 
   const loadSuppliers = async () => {
     try {
@@ -50,10 +55,11 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     }
   };
 
-  const loadSupplierCommitments = async (supId) => {
+  const loadSupplierCommitments = async (supId, cat) => {
     try {
       const list = await dbAction('commitments:get', { supplierId: supId });
-      const active = (list || []).filter(c => c.status === 'active' && c.remainingQty > 0);
+      const targetCategory = cat === 'sales_storage' ? 'sale' : 'purchase';
+      const active = (list || []).filter(c => (c.category === targetCategory || !c.category) && c.status === 'active' && c.remainingQty > 0);
       setCommitments(active);
       if (active.length > 0 && rateMode === 'commitment') {
         applyCommitment(active[0]);
@@ -78,68 +84,85 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     }
   };
 
-  const loadStorageArrivals = async (supId) => {
+  const loadStorageItems = async (supId, cat) => {
     setLoading(true);
     setErrorMsg('');
     try {
-      const list = await dbAction('arrivals:get', { supplierId: supId });
-      const pendingStorage = (list || []).filter(a => {
-        const remBags = a.remainingBags !== undefined ? Number(a.remainingBags) : Number(a.bags);
-        return (a.status === 'storage' || a.status === 'partial_settled') && remBags > 0;
-      });
-      setStorageArrivals(pendingStorage);
-      const allIds = pendingStorage.map(a => a.id);
-      setSelectedArrivalIds(allIds);
-      updateTotalBags(allIds, pendingStorage);
+      if (cat === 'sales_storage') {
+        // Load unsettled Store Out dispatches
+        const list = await dbAction('dispatches:get', { supplierId: supId });
+        const pendingDispatches = (list || []).filter(d => {
+          const isHusk = d.dispatchType === 'husk' || d.product === 'prod_husk' || d.product === 'Husk';
+          if (isHusk) return false;
+          const isStoreOut = d.rateType === 'storage_out' || d.status === 'storage_out' || d.status === 'partial_settled';
+          const remBags = d.remainingBags !== undefined ? Number(d.remainingBags) : Number(d.bags);
+          return isStoreOut && remBags > 0;
+        });
+        setStorageItems(pendingDispatches);
+        const allIds = pendingDispatches.map(d => d.id);
+        setSelectedItemIds(allIds);
+        updateTotalBags(allIds, pendingDispatches);
+      } else {
+        // Load unsettled Store In arrivals
+        const list = await dbAction('arrivals:get', { supplierId: supId });
+        const pendingArrivals = (list || []).filter(a => {
+          const remBags = a.remainingBags !== undefined ? Number(a.remainingBags) : Number(a.bags);
+          return (a.status === 'storage' || a.status === 'partial_settled') && remBags > 0;
+        });
+        setStorageItems(pendingArrivals);
+        const allIds = pendingArrivals.map(a => a.id);
+        setSelectedItemIds(allIds);
+        updateTotalBags(allIds, pendingArrivals);
+      }
     } catch (e) {
-      setErrorMsg('Failed to load arrivals: ' + e.message);
+      setErrorMsg('Failed to load storage items: ' + e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const updateTotalBags = (ids, arrivalsList) => {
-    const activeArrivals = (arrivalsList || storageArrivals).filter(a => ids.includes(a.id));
-    const totalBags = activeArrivals.reduce((sum, a) => {
-      const remBags = a.remainingBags !== undefined ? Number(a.remainingBags) : Number(a.bags);
+  const updateTotalBags = (ids, itemList) => {
+    const activeItems = (itemList || storageItems).filter(item => ids.includes(item.id));
+    const totalBags = activeItems.reduce((sum, item) => {
+      const remBags = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
       return sum + remBags;
     }, 0);
     setSettleBagsInput(String(Math.round(totalBags * 100) / 100));
   };
 
-  const handleToggleArrival = (id) => {
+  const handleToggleItem = (id) => {
     let newSelected;
-    if (selectedArrivalIds.includes(id)) {
-      newSelected = selectedArrivalIds.filter(x => x !== id);
+    if (selectedItemIds.includes(id)) {
+      newSelected = selectedItemIds.filter(x => x !== id);
     } else {
-      newSelected = [...selectedArrivalIds, id];
+      newSelected = [...selectedItemIds, id];
     }
-    setSelectedArrivalIds(newSelected);
+    setSelectedItemIds(newSelected);
     updateTotalBags(newSelected);
   };
 
   const handleSelectAll = () => {
-    if (selectedArrivalIds.length === storageArrivals.length) {
-      setSelectedArrivalIds([]);
+    if (selectedItemIds.length === storageItems.length) {
+      setSelectedItemIds([]);
       setSettleBagsInput('0');
     } else {
-      const allIds = storageArrivals.map(a => a.id);
-      setSelectedArrivalIds(allIds);
+      const allIds = storageItems.map(item => item.id);
+      setSelectedItemIds(allIds);
       updateTotalBags(allIds);
     }
   };
 
-  // Selected arrivals calculations
-  const selectedArrivals = storageArrivals.filter(a => selectedArrivalIds.includes(a.id));
+  // Selected items calculations
+  const selectedItems = storageItems.filter(item => selectedItemIds.includes(item.id));
 
   let totalAvailBags = 0;
   let totalAvailWeight = 0;
   let totalAvailEndProduct = 0;
 
-  selectedArrivals.forEach(arr => {
-    const b = arr.remainingBags !== undefined ? Number(arr.remainingBags) : Number(arr.bags);
-    const ep = arr.remainingEndProduct !== undefined ? Number(arr.remainingEndProduct) : Number(arr.endProductWeight);
-    const w = arr.bags > 0 ? (b / arr.bags) * Number(arr.weight) : 0;
+  selectedItems.forEach(item => {
+    const b = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
+    const ep = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
+    const w = item.bags > 0 ? (b / item.bags) * Number(item.weight || (b * 50)) : Number(item.weight || 0);
 
     totalAvailBags += b;
     totalAvailWeight += w;
@@ -150,10 +173,9 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   const averageOutturn = totalAvailWeight > 0 ? (totalAvailEndProduct / (totalAvailWeight / 50)) : 0;
   const averageOutturnPercentage = totalAvailWeight > 0 ? (totalAvailEndProduct / totalAvailWeight) * 100 : 0;
 
-  // Settle calculations based on user input bags (full 500 or partial 450)
+  // Settle calculations based on user input bags
   const bagsToSettle = Math.min(parseFloat(settleBagsInput) || 0, totalAvailBags);
   
-  // Calculate equivalent end product to settle using average outturn!
   let settledEndProduct = 0;
   if (bagsToSettle >= totalAvailBags) {
     settledEndProduct = totalAvailEndProduct;
@@ -182,11 +204,11 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     setSuccessMsg('');
 
     if (!selectedSupplierId) {
-      setErrorMsg('Please select a supplier');
+      setErrorMsg('Please select a supplier / party');
       return;
     }
-    if (selectedArrivalIds.length === 0) {
-      setErrorMsg('Please select at least one storage arrival to settle');
+    if (selectedItemIds.length === 0) {
+      setErrorMsg('Please select at least one storage record to settle');
       return;
     }
     if (bagsToSettle <= 0) {
@@ -199,13 +221,16 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     }
 
     const supplier = suppliers.find(s => s.id === selectedSupplierId);
+    const isSales = settlementCategory === 'sales_storage';
 
     setSubmitting(true);
     try {
-      const res = await dbAction('settlements:settle', {
+      const payload = {
         supplierId: selectedSupplierId,
         supplierName: supplier ? supplier.name : 'Unknown',
-        arrivalIds: selectedArrivalIds,
+        settlementCategory,
+        arrivalIds: isSales ? [] : selectedItemIds,
+        dispatchIds: isSales ? selectedItemIds : [],
         commitmentId: rateMode === 'commitment' ? selectedCommitmentId : null,
         settleBags: bagsToSettle,
         settlementRate: numRate,
@@ -213,12 +238,13 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         tcsRate: numTcsRate,
         date,
         notes
-      });
+      };
+
+      const res = await dbAction('settlements:settle', payload);
 
       setSuccessMsg(`Settlement ${res.settlementNo} executed successfully for ₹${res.settlementNetAmount.toLocaleString()}!`);
-      // Reload remaining storage arrivals and commitments
-      await loadStorageArrivals(selectedSupplierId);
-      await loadSupplierCommitments(selectedSupplierId);
+      await loadStorageItems(selectedSupplierId, settlementCategory);
+      await loadSupplierCommitments(selectedSupplierId, settlementCategory);
       if (onSettled) onSettled();
     } catch (err) {
       setErrorMsg(err.message || 'Settlement failed');
@@ -236,33 +262,61 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
             <span>Storage Coffee Settlement Wizard</span>
           </div>
           <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-            Batch Settle Multiple Arrivals with Combined Average Outturn or Against Commitments
+            Batch Settle Store In (Arrivals) or Store Out (Dispatches) at Agreed Settlement Rates
           </span>
         </div>
 
-        {/* Step 1: Select Supplier */}
+        {/* Settlement Category Pills: Purchase Storage vs Sales Storage */}
+        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+          <button
+            type="button"
+            className={`btn ${settlementCategory === 'purchase_storage' ? 'btn-coffee' : 'btn-secondary'}`}
+            style={{ flex: 1, padding: '0.65rem', fontSize: '0.88rem' }}
+            onClick={() => setSettlementCategory('purchase_storage')}
+          >
+            <Truck size={16} /> 📦 Purchase Storage (Store In Arrivals)
+          </button>
+          <button
+            type="button"
+            className={`btn ${settlementCategory === 'sales_storage' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ flex: 1, padding: '0.65rem', fontSize: '0.88rem' }}
+            onClick={() => setSettlementCategory('sales_storage')}
+          >
+            <PackageCheck size={16} /> 📤 Sales Storage (Store Out Dispatches)
+          </button>
+        </div>
+
+        {/* Step 1: Select Party */}
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
           <div className="form-group" style={{ flex: 1 }}>
-            <label className="form-label">Select Supplier with Storage Coffee</label>
-            <select
-              className="form-control"
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label className="form-label">
+                Select Party with {settlementCategory === 'sales_storage' ? 'Store Out Dispatches' : 'Store In Arrivals'}
+              </label>
+              {onOpenNewSupplier && (
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                  onClick={onOpenNewSupplier}
+                >
+                  + New Party (F9)
+                </button>
+              )}
+            </div>
+            <SearchableSupplierSelect
+              suppliers={suppliers}
               value={selectedSupplierId}
-              onChange={e => setSelectedSupplierId(e.target.value)}
-            >
-              <option value="">-- Choose Supplier --</option>
-              {suppliers.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name} {s.place ? `(${s.place})` : ''} - [Storage: {s.storageBags} Bags / {s.storageEndProduct} kg EP]
-                </option>
-              ))}
-            </select>
+              onChange={(sId) => setSelectedSupplierId(sId)}
+              onAddNewSupplier={onOpenNewSupplier}
+              placeholder="Search party account..."
+            />
           </div>
           <button 
             className="btn btn-secondary" 
             onClick={() => {
               if (selectedSupplierId) {
-                loadStorageArrivals(selectedSupplierId);
-                loadSupplierCommitments(selectedSupplierId);
+                loadStorageItems(selectedSupplierId, settlementCategory);
+                loadSupplierCommitments(selectedSupplierId, settlementCategory);
               }
             }}
             disabled={!selectedSupplierId || loading}
@@ -288,31 +342,27 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
 
       {selectedSupplierId && (
         <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.25rem' }}>
-          {/* Left Column: Storage Arrivals List */}
+          {/* Left Column: Storage Items Table */}
           <div className="card">
             <div className="card-header">
               <div className="card-title" style={{ fontSize: '0.95rem' }}>
-                <span>Unsettled Storage Arrivals</span>
-                <span className="badge badge-coffee">{storageArrivals.length} Available</span>
+                <span>{settlementCategory === 'sales_storage' ? 'Unsettled Store Out Dispatches' : 'Unsettled Store In Arrivals'}</span>
+                <span className="badge badge-coffee">{storageItems.length} Available</span>
               </div>
               <button 
                 className="btn btn-secondary btn-sm"
                 onClick={handleSelectAll}
-                disabled={storageArrivals.length === 0}
+                disabled={storageItems.length === 0}
               >
-                {selectedArrivalIds.length === storageArrivals.length ? 'Deselect All' : 'Select All'}
+                {selectedItemIds.length === storageItems.length ? 'Deselect All' : 'Select All'}
               </button>
             </div>
 
             {loading ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>Loading storage arrivals...</div>
-            ) : storageArrivals.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>Loading storage items...</div>
+            ) : storageItems.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' }}>
-                No unsettled storage coffee found for this supplier.
-                <br />
-                <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                  Arrivals saved with "Save as Storage" will show up here.
-                </span>
+                No unsettled {settlementCategory === 'sales_storage' ? 'Store Out dispatches' : 'Store In arrivals'} found for this party.
               </div>
             ) : (
               <div className="table-wrapper" style={{ maxHeight: '420px', overflowY: 'auto' }}>
@@ -321,40 +371,34 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                     <tr>
                       <th style={{ width: '40px' }}>Select</th>
                       <th>Date</th>
-                      <th>Arrival #</th>
+                      <th>Ref #</th>
                       <th>Product</th>
                       <th className="num">Rem. Bags</th>
                       <th className="num">Rem. EP (kg)</th>
-                      <th className="num">Outturn</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {storageArrivals.map(arr => {
-                      const isSelected = selectedArrivalIds.includes(arr.id);
-                      const remBags = arr.remainingBags !== undefined ? arr.remainingBags : arr.bags;
-                      const remEP = arr.remainingEndProduct !== undefined ? arr.remainingEndProduct : arr.endProductWeight;
+                    {storageItems.map(item => {
+                      const isSelected = selectedItemIds.includes(item.id);
+                      const remBags = item.remainingBags !== undefined ? item.remainingBags : item.bags;
+                      const remEP = item.remainingEndProduct !== undefined ? item.remainingEndProduct : (item.endProductWeight || item.weight);
 
                       return (
                         <tr 
-                          key={arr.id} 
+                          key={item.id} 
                           style={{ cursor: 'pointer', background: isSelected ? '#fffbeb' : 'transparent' }}
-                          onClick={() => handleToggleArrival(arr.id)}
+                          onClick={() => handleToggleItem(item.id)}
                         >
                           <td style={{ textAlign: 'center' }}>
                             {isSelected ? <CheckSquare size={16} color="#d97706" /> : <Square size={16} color="#94a3b8" />}
                           </td>
-                          <td style={{ fontSize: '0.8rem' }}>{arr.date}</td>
-                          <td style={{ fontWeight: 600 }}>{arr.arrivalNo}</td>
+                          <td style={{ fontSize: '0.8rem' }}>{item.date}</td>
+                          <td style={{ fontWeight: 600 }}>{item.arrivalNo || item.dispatchNo}</td>
                           <td>
-                            <span className="badge badge-coffee">{arr.product}</span>
+                            <span className="badge badge-coffee">{item.product}</span>
                           </td>
                           <td className="num" style={{ fontWeight: 600 }}>{remBags}</td>
-                          <td className="num" style={{ fontFamily: 'var(--font-mono)' }}>{remEP.toLocaleString()}</td>
-                          <td className="num">
-                            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                              {arr.outturn} {arr.outturnType === 'percentage' ? '%' : 'kg/50k'}
-                            </span>
-                          </td>
+                          <td className="num" style={{ fontFamily: 'var(--font-mono)' }}>{remEP ? remEP.toLocaleString() : 0}</td>
                         </tr>
                       );
                     })}
@@ -364,25 +408,25 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
             )}
           </div>
 
-          {/* Right Column: Combined Average Outturn & Settlement Execution */}
+          {/* Right Column: Settle Calculation & Execution */}
           <div className="card">
             <div className="card-header">
               <div className="card-title" style={{ fontSize: '0.95rem' }}>
-                <span>Average Outturn & Settle Calculation</span>
+                <span>{settlementCategory === 'sales_storage' ? 'Sales Settlement Calculation' : 'Purchase Settlement Calculation'}</span>
               </div>
-              <span className="badge badge-blue">{selectedArrivalIds.length} Selected</span>
+              <span className="badge badge-blue">{selectedItemIds.length} Selected</span>
             </div>
 
-            {selectedArrivalIds.length === 0 ? (
+            {selectedItemIds.length === 0 ? (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
-                Please select one or more storage arrivals to view combined average outturn.
+                Please select one or more storage records to view settlement calculation.
               </div>
             ) : (
               <form onSubmit={handleExecuteSettlement} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {/* Combined Average Outturn Banner */}
                 <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.85rem 1rem' }}>
                   <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#92400e', textTransform: 'uppercase' }}>
-                    Combined Batch Outturn (Across {selectedArrivals.length} Arrivals)
+                    Combined Batch Yield Across {selectedItems.length} Records
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.35rem' }}>
                     <div>
@@ -404,7 +448,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   </div>
                 </div>
 
-                {/* Settle Bags Input (Full or Partial) */}
+                {/* Settle Bags Input */}
                 <div className="form-group">
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <label className="form-label">Bags to Settle Now *</label>
@@ -421,22 +465,13 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                     onChange={e => setSettleBagsInput(e.target.value)}
                     required
                   />
-                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.2rem' }}>
-                    {bagsToSettle < totalAvailBags ? (
-                      <span style={{ color: '#d97706', fontWeight: 600 }}>
-                        ⚠️ Partial Settlement: {bagsToSettle} bags settled. {(totalAvailBags - bagsToSettle).toFixed(1)} bags will remain in storage!
-                      </span>
-                    ) : (
-                      <span>Full Settlement of all selected arrivals ({bagsToSettle} bags).</span>
-                    )}
-                  </div>
                 </div>
 
-                {/* Resulting Equivalent End Product */}
+                {/* Resulting EP */}
                 <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
-                      Equivalent End Product (EP)
+                      Equivalent Clean EP Weight
                     </div>
                     <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', fontFamily: 'var(--font-mono)' }}>
                       {settledEndProduct.toLocaleString()} kg
@@ -444,11 +479,10 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   </div>
                   <div style={{ textAlign: 'right', fontSize: '0.75rem', color: '#64748b' }}>
                     <div>{(settledEndProduct / 100).toFixed(2)} Quintals</div>
-                    <div>Calculation: {bagsToSettle} bags × {averageOutturn.toFixed(2)} OT</div>
                   </div>
                 </div>
 
-                {/* Rate Option: Manual Rate vs Settle against Supplier Commitment */}
+                {/* Rate Mode */}
                 <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem' }}>
                   <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
@@ -468,41 +502,32 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                         checked={rateMode === 'commitment'}
                         onChange={() => {
                           setRateMode('commitment');
-                          if (commitments.length > 0) {
-                            applyCommitment(commitments[0]);
-                          }
+                          if (commitments.length > 0) applyCommitment(commitments[0]);
                         }}
                         disabled={commitments.length === 0}
                       />
                       <Handshake size={14} style={{ display: 'inline' }} />
-                      Settle Against Commitment ({commitments.length} Active)
+                      From {settlementCategory === 'sales_storage' ? 'Sales' : 'Purchase'} Commitment ({commitments.length})
                     </label>
                   </div>
 
                   {rateMode === 'commitment' && (
                     <div className="form-group" style={{ marginBottom: '0.75rem' }}>
                       <label className="form-label">Select Commitment Contract *</label>
-                      {commitments.length === 0 ? (
-                        <div style={{ color: '#dc2626', fontSize: '0.8rem' }}>
-                          No active commitments found for this supplier.
-                        </div>
-                      ) : (
-                        <select
-                          className="form-control"
-                          value={selectedCommitmentId}
-                          onChange={e => handleCommitmentChange(e.target.value)}
-                        >
-                          {commitments.map(c => (
-                            <option key={c.id} value={c.id}>
-                              {c.commitmentNo} - {c.product} ({c.remainingQty} {c.type === 'bags' ? 'Bags' : 'kg EP'} remaining @ ₹{c.rate}/{c.type === 'bags' ? 'Bag' : 'kg'})
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      <select
+                        className="form-control"
+                        value={selectedCommitmentId}
+                        onChange={e => handleCommitmentChange(e.target.value)}
+                      >
+                        {commitments.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.commitmentNo} - {c.product} ({c.remainingQty} {c.type === 'bags' ? 'Bags' : 'kg EP'} @ ₹{c.rate})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   )}
 
-                  {/* Rate & Unit Inputs */}
                   <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                     <div className="form-group">
                       <label className="form-label">Rate Basis</label>
@@ -512,7 +537,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                         onChange={e => setRateUnit(e.target.value)}
                         disabled={rateMode === 'commitment'}
                       >
-                        <option value="per_kg_ep">Rate per Kg EP (Standard)</option>
+                        <option value="per_kg_ep">Rate per Kg EP</option>
                         <option value="per_bag">Rate per Bag (50kg)</option>
                       </select>
                     </div>
@@ -523,7 +548,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                         type="number"
                         step="any"
                         className="form-control num-input"
-                        placeholder={rateUnit === 'per_bag' ? '₹ per bag' : '₹ per kg EP'}
+                        placeholder="₹ rate"
                         value={settleRate}
                         onChange={e => setSettleRate(e.target.value)}
                         required
@@ -533,64 +558,27 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   </div>
                 </div>
 
-                {/* TCS & Date */}
-                <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                  <div className="form-group">
-                    <label className="form-label">TCS Deduction (%)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="form-control num-input"
-                      value={tcsRate}
-                      onChange={e => setTcsRate(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Settlement Date</label>
-                    <input
-                      type="date"
-                      className="form-control"
-                      value={date}
-                      onChange={e => setDate(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                {/* Bill Amounts Summary */}
+                {/* Summary Card */}
                 <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '0.85rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem', fontSize: '0.85rem' }}>
                     <span style={{ color: '#64748b' }}>Gross Settlement:</span>
                     <strong style={{ fontFamily: 'var(--font-mono)' }}>₹{grossSettlementAmount.toLocaleString()}</strong>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem', fontSize: '0.85rem' }}>
-                    <span style={{ color: '#64748b' }}>TCS Deduction ({numTcsRate}%):</span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', color: '#dc2626' }}>- ₹{tcsAmount.toLocaleString()}</strong>
-                  </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '0.5rem', fontSize: '1.05rem' }}>
                     <span style={{ fontWeight: 600 }}>Net Bill Amount:</span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', color: '#059669' }}>₹{netSettlementAmount.toLocaleString()}</strong>
+                    <strong style={{ fontFamily: 'var(--font-mono)', color: settlementCategory === 'sales_storage' ? '#2563eb' : '#059669' }}>
+                      ₹{netSettlementAmount.toLocaleString()}
+                    </strong>
                   </div>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Settlement Notes</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. Settle 450 bags at average OT 26.4 against contract"
-                    value={notes}
-                    onChange={e => setNotes(e.target.value)}
-                  />
                 </div>
 
                 <button 
                   type="submit" 
-                  className="btn btn-primary" 
+                  className={`btn ${settlementCategory === 'sales_storage' ? 'btn-primary' : 'btn-coffee'}`}
                   style={{ width: '100%', padding: '0.75rem', fontSize: '0.95rem' }}
                   disabled={submitting}
                 >
-                  <Check size={18} /> {submitting ? 'Processing Settlement...' : `Confirm & Bill Settlement (₹${netSettlementAmount.toLocaleString()})`}
+                  <Check size={18} /> {submitting ? 'Executing Settlement...' : `Confirm & Bill ${settlementCategory === 'sales_storage' ? 'Sales' : 'Purchase'} Settlement (₹${netSettlementAmount.toLocaleString()})`}
                 </button>
               </form>
             )}

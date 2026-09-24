@@ -1,16 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Handshake, Plus, CheckCircle, Clock, AlertCircle, Trash2 } from 'lucide-react';
+import { Handshake, Plus, CheckCircle, Clock, AlertCircle, Trash2, Edit2, UserPlus, Scale } from 'lucide-react';
 import { dbAction } from '../utils/api';
+import SearchableSupplierSelect from './SearchableSupplierSelect';
+import CommitmentWashModal from './CommitmentWashModal';
 
-export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onDataChanged, triggerNew = 0, triggerExport = 0 }) {
+export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onDataChanged, triggerNew = 0, triggerExport = 0, onOpenNewSupplier }) {
   const [commitments, setCommitments] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
 
-  // New Commitment Modal
+  const [activeTabFilter, setActiveTabFilter] = useState('all'); // 'all', 'purchase', 'sale', 'washed'
+  const [showWashModal, setShowWashModal] = useState(false);
+
+  // Commitment Modal (New / Edit)
   const [showModal, setShowModal] = useState(false);
+  const [editingCommitment, setEditingCommitment] = useState(null);
   const [supplierId, setSupplierId] = useState('');
+  const [category, setCategory] = useState('purchase'); // 'purchase' or 'sale'
   const [product, setProduct] = useState('RC Raw');
   const [type, setType] = useState('bags'); // 'bags' or 'end_product'
   const [quantity, setQuantity] = useState('');
@@ -23,8 +30,11 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
     loadData();
   }, [dataVersion]);
 
-  // Contextual shortcuts: Alt+C opens new commitment modal
-  useEffect(() => { if (triggerNew > 0) setShowModal(true); }, [triggerNew]);
+  useEffect(() => { 
+    if (triggerNew > 0) {
+      openNewCommitment();
+    }
+  }, [triggerNew]);
 
   const loadData = async () => {
     setLoading(true);
@@ -42,7 +52,33 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
     }
   };
 
-  const handleAddCommitment = async (e) => {
+  const openNewCommitment = (cat = 'purchase') => {
+    setEditingCommitment(null);
+    setSupplierId('');
+    setCategory(cat);
+    setProduct('RC Raw');
+    setType('bags');
+    setQuantity('');
+    setRate('');
+    setDate(new Date().toISOString().split('T')[0]);
+    setNotes('');
+    setShowModal(true);
+  };
+
+  const openEditCommitment = (c) => {
+    setEditingCommitment(c);
+    setSupplierId(c.supplierId);
+    setCategory(c.category || 'purchase');
+    setProduct(c.product);
+    setType(c.type || 'bags');
+    setQuantity(String(c.quantity));
+    setRate(String(c.rate));
+    setDate(c.date || new Date().toISOString().split('T')[0]);
+    setNotes(c.notes || '');
+    setShowModal(true);
+  };
+
+  const handleSaveCommitment = async (e) => {
     if (e) e.preventDefault();
     if (!supplierId || !quantity || !rate) return;
 
@@ -50,24 +86,30 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
 
     setSubmitting(true);
     try {
-      await dbAction('commitments:add', {
+      const payload = {
         supplierId,
         supplierName: sup ? sup.name : 'Unknown',
+        category,
         product,
         type,
         quantity: parseFloat(quantity),
         rate: parseFloat(rate),
         date,
         notes
-      });
+      };
+
+      if (editingCommitment) {
+        await dbAction('commitments:update', { id: editingCommitment.id, data: payload });
+      } else {
+        await dbAction('commitments:add', payload);
+      }
+
       setShowModal(false);
-      setQuantity('');
-      setRate('');
-      setNotes('');
+      setEditingCommitment(null);
       await loadData();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert('Error adding commitment: ' + err.message);
+      alert('Error saving commitment: ' + err.message);
     } finally {
       setSubmitting(false);
     }
@@ -75,7 +117,7 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
 
   const handleDeleteCommitment = async (c) => {
     if (c.fulfilledQty > 0) {
-      alert(`Cannot delete ${c.commitmentNo} — it has ${c.fulfilledQty} ${c.type} already fulfilled. Delete the linked arrivals first.`);
+      alert(`Cannot delete ${c.commitmentNo} — it has ${c.fulfilledQty} ${c.type} already fulfilled.`);
       return;
     }
     if (!window.confirm(`Delete commitment ${c.commitmentNo} for ${c.supplierName}?`)) return;
@@ -91,6 +133,16 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
     }
   };
 
+  const filteredCommitments = commitments.filter(c => {
+    if (activeTabFilter === 'purchase') return (c.category === 'purchase' || !c.category);
+    if (activeTabFilter === 'sale') return c.category === 'sale';
+    if (activeTabFilter === 'washed') return c.status === 'washed';
+    return true;
+  });
+
+  const activePurchaseCount = commitments.filter(c => (c.category === 'purchase' || !c.category) && c.status === 'active').length;
+  const activeSaleCount = commitments.filter(c => c.category === 'sale' && c.status === 'active').length;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div className="card">
@@ -98,104 +150,130 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
           <div>
             <div className="card-title">
               <Handshake size={20} color="#2563eb" />
-              <span>Supplier Purchase Commitments (Contracts)</span>
+              <span>Purchase & Sale Commitments (Contracts)</span>
               <span className="badge badge-blue">{commitments.length} Total</span>
             </div>
             <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-              Book purchase commitments (e.g. 500 bags @ ₹456 or 10 Ton EP @ ₹456). Arrivals auto-deduct quantity.
+              Book purchase & sales commitments. Settle opposite commitments manually using the Wash wizard.
             </span>
           </div>
 
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-            <Plus size={16} /> + New Commitment (Alt+C)
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button 
+              className="btn btn-purple" 
+              style={{ background: '#7c3aed', color: '#fff' }}
+              onClick={() => setShowWashModal(true)}
+            >
+              <Scale size={16} /> Wash / Settle Commitments
+            </button>
+            <button className="btn btn-primary" onClick={() => openNewCommitment('purchase')}>
+              <Plus size={16} /> + Purchase Contract
+            </button>
+            <button className="btn btn-coffee" onClick={() => openNewCommitment('sale')}>
+              <Plus size={16} /> + Sale Contract
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Filter Tabs */}
+      <div style={{ display: 'flex', gap: '0.5rem', background: '#f1f5f9', padding: '0.5rem', borderRadius: '8px' }}>
+        <button
+          className={`btn btn-sm ${activeTabFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTabFilter('all')}
+        >
+          All Contracts ({commitments.length})
+        </button>
+        <button
+          className={`btn btn-sm ${activeTabFilter === 'purchase' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTabFilter('purchase')}
+        >
+          🛒 Purchase Commitments ({activePurchaseCount} Active)
+        </button>
+        <button
+          className={`btn btn-sm ${activeTabFilter === 'sale' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTabFilter('sale')}
+        >
+          📤 Sales Commitments ({activeSaleCount} Active)
+        </button>
+        <button
+          className={`btn btn-sm ${activeTabFilter === 'washed' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTabFilter('washed')}
+        >
+          🧼 Washed Contracts ({commitments.filter(c => c.status === 'washed').length})
+        </button>
+      </div>
+
       <div className="card" style={{ padding: 0 }}>
-        <div className="table-wrapper">
-          <table>
+        <div className="table-responsive">
+          <table className="data-table">
             <thead>
               <tr>
-                <th>Commitment #</th>
+                <th>Contract No</th>
+                <th>Category</th>
                 <th>Date</th>
-                <th>Supplier Name</th>
+                <th>Party Name</th>
                 <th>Product</th>
-                <th>Commitment Type</th>
-                <th className="num">Total Quantity</th>
-                <th className="num">Rate (₹)</th>
-                <th className="num">Fulfilled Qty</th>
-                <th className="num">Remaining Qty</th>
-                <th>Fulfillment Progress</th>
+                <th>Type</th>
+                <th>Total Qty</th>
+                <th>Fulfilled</th>
+                <th>Remaining</th>
+                <th>Agreed Rate</th>
                 <th>Status</th>
-                <th>Actions</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="12" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading commitments...</td></tr>
-              ) : commitments.length === 0 ? (
-                <tr>
-                  <td colSpan="12" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-                    No commitments found. Click <strong>+ New Commitment</strong> to create.
-                  </td>
-                </tr>
+                <tr><td colSpan="12" style={{ textAlign: 'center', padding: '2rem' }}>Loading commitments...</td></tr>
+              ) : filteredCommitments.length === 0 ? (
+                <tr><td colSpan="12" style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>No commitments found.</td></tr>
               ) : (
-                commitments.map(c => {
-                  const percent = c.quantity > 0 ? Math.min(100, Math.round((c.fulfilledQty / c.quantity) * 100)) : 0;
-                  const unit = c.type === 'bags' ? 'Bags' : 'kg EP';
-
+                filteredCommitments.map(c => {
+                  const isSale = c.category === 'sale';
                   return (
                     <tr key={c.id}>
-                      <td style={{ fontWeight: 600 }}>{c.commitmentNo}</td>
-                      <td>{c.date}</td>
+                      <td><strong className="code-badge">{c.commitmentNo}</strong></td>
                       <td>
-                        <span 
-                          style={{ color: '#2563eb', cursor: 'pointer', fontWeight: 600 }}
-                          onClick={() => onSelectSupplier && onSelectSupplier(c.supplierId)}
+                        {isSale ? (
+                          <span className="badge badge-warning" style={{ background: '#fef3c7', color: '#92400e' }}>📤 Sale</span>
+                        ) : (
+                          <span className="badge badge-info">🛒 Purchase</span>
+                        )}
+                      </td>
+                      <td>{c.date || '-'}</td>
+                      <td>
+                        <a
+                          href="#ledger"
+                          style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none' }}
+                          onClick={(e) => { e.preventDefault(); onSelectSupplier(c.supplierId); }}
                         >
                           {c.supplierName}
-                        </span>
+                        </a>
                       </td>
-                      <td><span className="badge badge-coffee">{c.product}</span></td>
+                      <td><strong>{c.product}</strong></td>
+                      <td>{c.type === 'bags' ? '50kg Bags' : 'Kg Clean EP'}</td>
+                      <td><strong>{c.quantity}</strong></td>
+                      <td style={{ color: '#059669' }}>{c.fulfilledQty || 0}</td>
+                      <td style={{ color: c.remainingQty > 0 ? '#dc2626' : '#64748b', fontWeight: 600 }}>
+                        {c.remainingQty}
+                      </td>
+                      <td><strong>₹{c.rate} / {c.type === 'bags' ? 'Bag' : 'Kg'}</strong></td>
                       <td>
-                        <span className="badge badge-gray">
-                          {c.type === 'bags' ? 'Bags @ Rate' : 'End Product (EP) @ Rate'}
-                        </span>
+                        {c.status === 'fulfilled' ? (
+                          <span className="badge badge-success"><CheckCircle size={12} /> Fulfilled</span>
+                        ) : c.status === 'washed' ? (
+                          <span className="badge badge-purple" style={{ background: '#f3e8ff', color: '#6b21a8' }}>🧼 Washed</span>
+                        ) : (
+                          <span className="badge badge-warning"><Clock size={12} /> Active</span>
+                        )}
                       </td>
-                      <td className="num" style={{ fontWeight: 600 }}>
-                        {c.quantity.toLocaleString()} {unit}
-                      </td>
-                      <td className="num" style={{ fontWeight: 700, color: '#0f172a' }}>
-                        ₹{c.rate}/{c.type === 'bags' ? 'Bag' : 'kg'}
-                      </td>
-                      <td className="num" style={{ color: '#059669', fontWeight: 600 }}>
-                        {c.fulfilledQty.toLocaleString()} {unit}
-                      </td>
-                      <td className="num" style={{ color: c.remainingQty > 0 ? '#d97706' : '#64748b', fontWeight: 700 }}>
-                        {c.remainingQty.toLocaleString()} {unit}
-                      </td>
-                      <td style={{ width: '160px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ flex: 1, height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                            <div style={{ width: `${percent}%`, height: '100%', background: percent >= 100 ? '#10b981' : '#3b82f6' }} />
-                          </div>
-                          <span style={{ fontSize: '0.72rem', color: '#64748b', width: '32px' }}>{percent}%</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`badge ${c.status === 'fulfilled' ? 'badge-green' : 'badge-amber'}`}>
-                          {c.status}
-                        </span>
-                      </td>
-                      <td>
-                        <button
-                          title="Delete Commitment"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: deletingId === c.id ? '#94a3b8' : '#dc2626', padding: '0.2rem' }}
-                          disabled={deletingId === c.id}
-                          onClick={() => handleDeleteCommitment(c)}
-                        >
-                          <Trash2 size={14} />
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn-icon" title="Edit" onClick={() => openEditCommitment(c)}>
+                          <Edit2 size={15} color="#2563eb" />
+                        </button>
+                        <button className="btn-icon" title="Delete" onClick={() => handleDeleteCommitment(c)} disabled={deletingId === c.id}>
+                          <Trash2 size={15} color="#ef4444" />
                         </button>
                       </td>
                     </tr>
@@ -207,121 +285,114 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
         </div>
       </div>
 
-      {/* Add Commitment Modal */}
+      {/* New/Edit Commitment Modal */}
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+        <div className="modal-backdrop">
+          <div className="modal-content" style={{ maxWidth: '560px' }}>
             <div className="modal-header">
-              <div className="modal-title">
-                <Handshake size={18} />
-                <span>Create Purchase Commitment</span>
+              <div className="modal-title-group">
+                <h3>{editingCommitment ? '✏️ Edit Commitment' : '🤝 Book New Commitment'}</h3>
+                <p className="modal-subtitle">Contractual agreement for coffee purchase or sale</p>
               </div>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowModal(false)}>
-                ✕
-              </button>
+              <button className="modal-close-btn" onClick={() => setShowModal(false)}>✕</button>
             </div>
 
-            <form onSubmit={handleAddCommitment} className="modal-body">
+            <form onSubmit={handleSaveCommitment} className="modal-body">
               <div className="form-group">
-                <label className="form-label">Supplier *</label>
-                <select
-                  className="form-control"
-                  value={supplierId}
-                  onChange={e => setSupplierId(e.target.value)}
-                  required
-                >
-                  <option value="">-- Choose Supplier --</option>
-                  {suppliers.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.place ? `(${s.place})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                <div className="form-group">
-                  <label className="form-label">Coffee Product</label>
-                  <select className="form-control" value={product} onChange={e => setProduct(e.target.value)}>
-                    <option value="RC Raw">RC Raw</option>
-                    <option value="RC EP">RC EP</option>
-                    <option value="AC Raw">AC Raw</option>
-                    <option value="RC A">RC A</option>
-                    <option value="RC B">RC B</option>
-                    <option value="RC AA">RC AA</option>
-                    <option value="RC PB">RC PB</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Commitment Basis *</label>
-                  <select className="form-control" value={type} onChange={e => setType(e.target.value)}>
-                    <option value="bags">Bags @ Rate (e.g. 500 bags @ 456)</option>
-                    <option value="end_product">End Product (EP) kg @ Rate</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                <div className="form-group">
-                  <label className="form-label">
-                    Total Quantity ({type === 'bags' ? 'Bags' : 'kg EP'}) *
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    className="form-control num-input"
-                    placeholder={type === 'bags' ? 'e.g. 500' : 'e.g. 10000'}
-                    value={quantity}
-                    onChange={e => setQuantity(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">
-                    Agreed Rate (₹ per {type === 'bags' ? 'Bag' : 'kg EP'}) *
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    className="form-control num-input"
-                    placeholder="e.g. 456"
-                    value={rate}
-                    onChange={e => setRate(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Date</label>
-                <input type="date" className="form-control" value={date} onChange={e => setDate(e.target.value)} />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Notes / Contract Details</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. Signed contract with estate broker"
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
+                <SearchableSupplierSelect
+                  suppliers={suppliers}
+                  selectedSupplierId={supplierId}
+                  onSelect={(id, name) => setSupplierId(id)}
+                  onOpenNewSupplier={onOpenNewSupplier}
+                  label="Party Name *"
                 />
               </div>
 
-              <div className="modal-footer" style={{ padding: '0.75rem 0 0 0', background: 'transparent' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>
-                  Cancel
-                </button>
+              <div className="form-grid-2">
+                <div className="form-group">
+                  <label className="form-label">Contract Category</label>
+                  <select className="form-control" value={category} onChange={(e) => setCategory(e.target.value)}>
+                    <option value="purchase">🛒 Purchase Commitment</option>
+                    <option value="sale">📤 Sales Commitment</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Product *</label>
+                  <select className="form-control" value={product} onChange={(e) => setProduct(e.target.value)}>
+                    <option value="RC Raw">RC Raw</option>
+                    <option value="RC EP">RC EP</option>
+                    <option value="AC Raw">AC Raw</option>
+                    <option value="prod_husk">Coffee Husk</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-grid-3" style={{ marginTop: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Unit Type</label>
+                  <select className="form-control" value={type} onChange={(e) => setType(e.target.value)}>
+                    <option value="bags">50kg Bags</option>
+                    <option value="end_product">Kg EP</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Quantity *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    placeholder="Total qty"
+                    value={quantity}
+                    onChange={(e) => setQuantity(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Contract Rate (₹) *</label>
+                  <input
+                    type="number"
+                    step="any"
+                    className="form-control"
+                    placeholder="Rate"
+                    value={rate}
+                    onChange={(e) => setRate(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ marginTop: '1rem' }}>
+                <label className="form-label">Notes</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Contract terms / delivery window"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-footer" style={{ marginTop: '1.25rem', padding: '1rem 0 0 0' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? 'Saving...' : 'Book Commitment'}
+                  {submitting ? 'Saving...' : 'Save Contract'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* Commitment Wash Modal */}
+      <CommitmentWashModal
+        isOpen={showWashModal}
+        onClose={() => setShowWashModal(false)}
+        onSaved={loadData}
+        onOpenNewSupplier={onOpenNewSupplier}
+      />
     </div>
   );
 }

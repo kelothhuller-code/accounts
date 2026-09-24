@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { CreditCard, Plus, Download, ShieldCheck, ArrowUpRight, Trash2 } from 'lucide-react';
+import { CreditCard, Plus, Download, ArrowUpRight, ArrowDownLeft, Trash2, Edit2 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 import { exportToCsv } from '../utils/exportCsv';
+import SearchableSupplierSelect from './SearchableSupplierSelect';
 
-export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onDataChanged, triggerNew = 0, triggerExport = 0 }) {
+export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onDataChanged, triggerNew = 0, triggerExport = 0, onOpenNewSupplier }) {
   const [payments, setPayments] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [dashboardMetrics, setDashboardMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('all'); // 'all', 'payment_paid', 'payment_received'
 
-  // New Payment Modal
+  // Payment Modal (New / Edit)
   const [showModal, setShowModal] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(null);
+  const [paymentType, setPaymentType] = useState('payment_paid'); // 'payment_paid' or 'payment_received'
   const [supplierId, setSupplierId] = useState('');
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState('Bank Transfer');
@@ -24,8 +28,12 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
     loadData();
   }, [dataVersion]);
 
-  // Contextual shortcuts: Alt+P opens payment modal, Alt+E exports
-  useEffect(() => { if (triggerNew > 0) setShowModal(true); }, [triggerNew]);
+  useEffect(() => { 
+    if (triggerNew > 0) {
+      openNewPayment('payment_paid');
+    }
+  }, [triggerNew]);
+
   useEffect(() => { if (triggerExport > 0) handleExportCsv(); }, [triggerExport]);
 
   const loadData = async () => {
@@ -46,52 +54,87 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
     }
   };
 
-  const handleAddPayment = async (e) => {
+  const openNewPayment = (type = 'payment_paid') => {
+    setEditingPayment(null);
+    setPaymentType(type);
+    setSupplierId('');
+    setAmount('');
+    setMode('Bank Transfer');
+    setReference('');
+    setDate(new Date().toISOString().split('T')[0]);
+    setNotes('');
+    setShowModal(true);
+  };
+
+  const openEditPayment = (p) => {
+    setEditingPayment(p);
+    setPaymentType(p.type || 'payment_paid');
+    setSupplierId(p.supplierId);
+    setAmount(String(p.amount));
+    setMode(p.mode || 'Bank Transfer');
+    setReference(p.reference || '');
+    setDate(p.date || new Date().toISOString().split('T')[0]);
+    setNotes(p.notes || '');
+    setShowModal(true);
+  };
+
+  const handleSavePayment = async (e) => {
     if (e) e.preventDefault();
     if (!supplierId || !amount || parseFloat(amount) <= 0) return;
 
     const sup = suppliers.find(s => s.id === supplierId);
     setSubmitting(true);
     try {
-      await dbAction('payments:add', {
+      const payload = {
         supplierId,
         supplierName: sup ? sup.name : 'Unknown',
-        type: 'payment_paid',
+        type: paymentType,
         amount: parseFloat(amount),
         mode,
         reference,
         date,
         notes
-      });
+      };
+
+      if (editingPayment) {
+        await dbAction('payments:update', { id: editingPayment.id, data: payload });
+      } else {
+        await dbAction('payments:add', payload);
+      }
+
       setShowModal(false);
-      setAmount('');
-      setReference('');
-      setNotes('');
+      setEditingPayment(null);
       await loadData();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert('Error adding payment: ' + err.message);
+      alert('Error saving payment: ' + err.message);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const filteredPayments = payments.filter(p => {
+    if (typeFilter === 'payment_paid') return p.type === 'payment_paid' || !p.type;
+    if (typeFilter === 'payment_received') return p.type === 'payment_received';
+    return true;
+  });
+
   const handleExportCsv = () => {
     const headers = [
       { key: 'paymentNo', label: 'Payment #' },
       { key: 'date', label: 'Date' },
-      { key: 'supplierName', label: 'Supplier' },
+      { key: 'supplierName', label: 'Party Name' },
       { key: 'type', label: 'Type' },
       { key: 'mode', label: 'Payment Mode' },
       { key: 'reference', label: 'Reference / UTR' },
       { key: 'amount', label: 'Amount (₹)' },
       { key: 'notes', label: 'Notes' },
     ];
-    exportToCsv('Payments_Register', headers, payments);
+    exportToCsv('Payments_Register', headers, filteredPayments);
   };
 
   const handleDeletePayment = async (pay) => {
-    if (!window.confirm(`Delete payment ${pay.paymentNo} of ₹${pay.amount.toLocaleString()} to ${pay.supplierName}?\nThis will reverse the balance.`)) return;
+    if (!window.confirm(`Delete payment ${pay.paymentNo} of ₹${pay.amount.toLocaleString()} for ${pay.supplierName}?\nThis will reverse the account balance.`)) return;
     setDeletingId(pay.id);
     try {
       await dbAction('payments:delete', { id: pay.id });
@@ -108,48 +151,84 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
     .filter(p => p.type === 'payment_paid' || !p.type)
     .reduce((sum, p) => sum + p.amount, 0);
 
+  const totalReceived = payments
+    .filter(p => p.type === 'payment_received')
+    .reduce((sum, p) => sum + p.amount, 0);
+
   const totalTcsSum = dashboardMetrics?.global?.totalTcsAllTime || 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       {/* Top Metrics Cards */}
-      <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <div className="metric-box success">
           <span className="metric-label">Total Payments Paid</span>
           <span className="metric-value">₹{totalPaid.toLocaleString()}</span>
-          <span className="metric-sub">Disbursed to suppliers against coffee purchases</span>
+          <span className="metric-sub">Disbursed to suppliers</span>
         </div>
 
-        {/* User requirement: "normal tcs deuction i should be able to see total tcs sum" */}
+        <div className="metric-box coffee" style={{ borderLeftColor: '#2563eb' }}>
+          <span className="metric-label">Total Payments Received</span>
+          <span className="metric-value" style={{ color: '#2563eb' }}>₹{totalReceived.toLocaleString()}</span>
+          <span className="metric-sub">Received from customers</span>
+        </div>
+
         <div className="metric-box purple" style={{ background: '#faf5ff' }}>
-          <span className="metric-label">Total TCS Deducted (All-Time Sum)</span>
+          <span className="metric-label">Total TCS Deducted (Sum)</span>
           <span className="metric-value" style={{ color: '#7c3aed' }}>
             ₹{totalTcsSum.toLocaleString()}
           </span>
-          <span className="metric-sub">TCS on purchase payments (0.1% or applicable rate)</span>
+          <span className="metric-sub">TCS on purchases/sales</span>
         </div>
 
         <div className="metric-box">
-          <span className="metric-label">Total Payment Vouchers</span>
+          <span className="metric-label">Total Vouchers</span>
           <span className="metric-value">{payments.length}</span>
-          <span className="metric-sub">Processed transactions</span>
+          <span className="metric-sub">Processed payments</span>
         </div>
       </div>
 
       {/* Main Table Card */}
       <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div className="card-title" style={{ fontSize: '1rem' }}>
-            <CreditCard size={18} color="#059669" />
-            <span>Payments Register</span>
+        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div className="card-title" style={{ fontSize: '1rem' }}>
+              <CreditCard size={18} color="#059669" />
+              <span>Payments & Vouchers Register</span>
+            </div>
+
+            {/* Type Filter Pills */}
+            <div style={{ display: 'flex', gap: '0.35rem' }}>
+              <button
+                className={`btn btn-sm ${typeFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTypeFilter('all')}
+              >
+                All
+              </button>
+              <button
+                className={`btn btn-sm ${typeFilter === 'payment_paid' ? 'btn-success' : 'btn-secondary'}`}
+                onClick={() => setTypeFilter('payment_paid')}
+              >
+                Paid (Outflow)
+              </button>
+              <button
+                className={`btn btn-sm ${typeFilter === 'payment_received' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setTypeFilter('payment_received')}
+              >
+                Received (Inflow)
+              </button>
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button className="btn btn-secondary btn-sm" onClick={handleExportCsv}>
               <Download size={14} /> Export CSV
             </button>
-            <button className="btn btn-success btn-sm" onClick={() => setShowModal(true)}>
-              <Plus size={14} /> + Record Payment Paid (Alt+P)
+            <button className="btn btn-success btn-sm" onClick={() => openNewPayment('payment_paid')}>
+              <ArrowUpRight size={14} /> + Record Paid (Alt+P)
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={() => openNewPayment('payment_received')}>
+              <ArrowDownLeft size={14} /> + Record Received
             </button>
           </div>
         </div>
@@ -160,7 +239,8 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
               <tr>
                 <th>Voucher #</th>
                 <th>Date</th>
-                <th>Supplier Name</th>
+                <th>Party Name</th>
+                <th>Type</th>
                 <th>Payment Mode</th>
                 <th>Reference / UTR</th>
                 <th>Notes</th>
@@ -170,15 +250,15 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading payments...</td></tr>
-              ) : payments.length === 0 ? (
+                <tr><td colSpan="9" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>Loading payments...</td></tr>
+              ) : filteredPayments.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-                    No payments recorded yet. Click <strong>+ Record Payment Paid</strong> to add.
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
+                    No payment vouchers found for this filter.
                   </td>
                 </tr>
               ) : (
-                payments.map(p => (
+                filteredPayments.map(p => (
                   <tr key={p.id}>
                     <td style={{ fontWeight: 600 }}>{p.paymentNo}</td>
                     <td>{p.date}</td>
@@ -191,6 +271,11 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
                       </span>
                     </td>
                     <td>
+                      <span className={`badge ${p.type === 'payment_received' ? 'badge-blue' : 'badge-green'}`}>
+                        {p.type === 'payment_received' ? '📥 Received' : '📤 Paid Out'}
+                      </span>
+                    </td>
+                    <td>
                       <span className="badge badge-gray">{p.mode}</span>
                     </td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{p.reference || '-'}</td>
@@ -199,14 +284,23 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
                       ₹{p.amount.toLocaleString()}
                     </td>
                     <td>
-                      <button
-                        title="Delete Payment"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: deletingId === p.id ? '#94a3b8' : '#dc2626', padding: '0.2rem' }}
-                        disabled={deletingId === p.id}
-                        onClick={() => handleDeletePayment(p)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.35rem' }}>
+                        <button
+                          title="Edit Payment"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb', padding: '0.2rem' }}
+                          onClick={() => openEditPayment(p)}
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          title="Delete Payment"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: deletingId === p.id ? '#94a3b8' : '#dc2626', padding: '0.2rem' }}
+                          disabled={deletingId === p.id}
+                          onClick={() => handleDeletePayment(p)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -216,35 +310,61 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
         </div>
       </div>
 
-      {/* Add Payment Modal */}
+      {/* Add / Edit Payment Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal-content" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div className="modal-title">
-                <ArrowUpRight size={18} color="#059669" />
-                <span>Record Payment Paid to Supplier</span>
+                {paymentType === 'payment_received' ? <ArrowDownLeft size={18} color="#2563eb" /> : <ArrowUpRight size={18} color="#059669" />}
+                <span>{editingPayment ? `Edit Payment ${editingPayment.paymentNo}` : paymentType === 'payment_received' ? 'Record Payment Received' : 'Record Payment Paid'}</span>
               </div>
               <button className="btn btn-secondary btn-sm" onClick={() => setShowModal(false)}>✕</button>
             </div>
 
-            <form onSubmit={handleAddPayment} className="modal-body">
+            <form onSubmit={handleSavePayment} className="modal-body">
               <div className="form-group">
-                <label className="form-label">Select Supplier *</label>
-                <select
-                  className="form-control"
+                <label className="form-label">Payment Direction Category</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${paymentType === 'payment_paid' ? 'btn-success' : 'btn-secondary'}`}
+                    style={{ flex: 1 }}
+                    onClick={() => setPaymentType('payment_paid')}
+                  >
+                    Paid Out to Party
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${paymentType === 'payment_received' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1 }}
+                    onClick={() => setPaymentType('payment_received')}
+                  >
+                    Received From Party
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label">Select Party / Customer / Supplier *</label>
+                  {onOpenNewSupplier && (
+                    <button
+                      type="button"
+                      style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+                      onClick={onOpenNewSupplier}
+                    >
+                      + New Party (F9)
+                    </button>
+                  )}
+                </div>
+                <SearchableSupplierSelect
+                  suppliers={suppliers}
                   value={supplierId}
-                  onChange={e => setSupplierId(e.target.value)}
-                  required
-                  autoFocus
-                >
-                  <option value="">-- Choose Supplier --</option>
-                  {suppliers.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.place ? `(${s.place})` : ''} - [Net Payable: ₹{s.netPayable.toLocaleString()}]
-                    </option>
-                  ))}
-                </select>
+                  onChange={(sId) => setSupplierId(sId)}
+                  onAddNewSupplier={onOpenNewSupplier}
+                  placeholder="Type to search party..."
+                />
               </div>
 
               <div className="form-group">
@@ -293,7 +413,7 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="e.g. Part payment against Lot #5"
+                  placeholder="e.g. Part payment against lot/invoice"
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
                 />
@@ -302,7 +422,7 @@ export default function PaymentsView({ onSelectSupplier, dataVersion = 0, onData
               <div className="modal-footer" style={{ padding: '0.75rem 0 0 0', background: 'transparent' }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? 'Saving...' : 'Record Payment'}
+                  {submitting ? 'Saving...' : editingPayment ? 'Update Payment' : 'Record Payment'}
                 </button>
               </div>
             </form>

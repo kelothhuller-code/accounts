@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { 
   LayoutDashboard, 
   Truck, 
+  PackageCheck,
   Users, 
   Layers, 
   CreditCard, 
@@ -9,11 +10,12 @@ import {
   BarChart3, 
   Settings, 
   PlusCircle,
-  Database
+  Database,
+  Lock
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 
-export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onOpenCommodity, onOpenSettings }) {
+export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onOpenCommodity, onOpenSettings, onLock }) {
   const [dbStatus, setDbStatus] = useState({ isMongoConnected: false });
 
   useEffect(() => {
@@ -32,6 +34,7 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onO
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, shortcut: 'F1 / Alt+D' },
     { id: 'arrivals', label: 'Coffee Arrivals', icon: Truck, shortcut: 'F2 / Alt+A' },
+    { id: 'dispatches', label: 'Dispatches & Sales', icon: PackageCheck, shortcut: 'F10 / Alt+K' },
     { id: 'suppliers', label: 'Suppliers & Ledger', icon: Users, shortcut: 'F3 / Alt+S' },
     { id: 'settlement', label: 'Settle Storage', icon: Layers, shortcut: 'F4 / Alt+W' },
     { id: 'payments', label: 'Payments & TCS', icon: CreditCard, shortcut: 'F5 / Alt+P' },
@@ -109,6 +112,16 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onO
           >
             <Settings size={13} />
           </button>
+          {onLock && (
+            <button 
+              className="btn btn-secondary btn-sm" 
+              style={{ padding: '0.25rem 0.5rem', background: '#1e293b', color: '#f87171', border: 'none' }}
+              onClick={onLock}
+              title="Lock System (Logout)"
+            >
+              <Lock size={13} />
+            </button>
+          )}
         </div>
       </div>
     </aside>

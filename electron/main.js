@@ -85,6 +85,9 @@ function createWindow() {
     } else if (input.key === 'F8') {
       event.preventDefault();
       mainWindow.webContents.send('shortcut-triggered', 'quick-add-product');
+    } else if (input.key === 'F9') {
+      event.preventDefault();
+      mainWindow.webContents.send('shortcut-triggered', 'quick-add-supplier');
     } else if (input.key === 'Escape') {
       mainWindow.webContents.send('shortcut-triggered', 'close-modal');
     }
@@ -112,6 +115,7 @@ function registerShortcuts() {
     { key: 'Alt+R', action: 'nav-reports' },
     { key: 'Alt+D', action: 'nav-dashboard' },
     { key: 'F8', action: 'quick-add-product' },
+    { key: 'F9', action: 'quick-add-supplier' },
   ];
 
   shortcutMap.forEach(({ key, action }) => {
@@ -182,6 +186,9 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'commitments:add':
         return dbController.addCommitment(payload);
 
+      case 'commitments:update':
+        return dbController.updateCommitment(payload.id, payload.data);
+
       case 'commitments:delete':
         return dbController.deleteCommitment(payload.id);
 
@@ -208,6 +215,9 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'settlements:get':
         return dbController.getSettlements(payload?.supplierId);
 
+      case 'settlements:update':
+        return dbController.updateSettlement(payload.id, payload.data);
+
       case 'settlements:delete':
         return dbController.deleteSettlement(payload.id);
 
@@ -218,8 +228,48 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'payments:add':
         return dbController.addPayment(payload);
 
+      case 'payments:update':
+        return dbController.updatePayment(payload.id, payload.data);
+
       case 'payments:delete':
         return dbController.deletePayment(payload.id);
+
+      // DISPATCHES
+      case 'dispatches:get':
+        return dbController.getDispatches(payload || {});
+
+      case 'dispatches:add':
+        return dbController.addDispatch(payload);
+
+      case 'dispatches:update':
+        return dbController.updateDispatch(payload.id, payload.data);
+
+      case 'dispatches:delete':
+        return dbController.deleteDispatch(payload.id);
+
+      // EP TRANSFERS
+      case 'ep-transfers:get':
+        return dbController.getEpTransfers(payload?.supplierId);
+
+      case 'ep-transfers:add':
+        return dbController.addEpTransfer(payload);
+
+      case 'ep-transfers:delete':
+        return dbController.deleteEpTransfer(payload.id);
+
+      // COMMITMENT WASHES
+      case 'commitments:wash':
+        return dbController.washCommitments(payload);
+
+      case 'commitments:get-washes':
+        return dbController.getCommitmentWashes(payload?.supplierId);
+
+      // OPENING STOCK & REQUIREMENT INSIGHT
+      case 'stock:update-opening':
+        return dbController.updateOpeningStock(payload);
+
+      case 'stock:requirement-insight':
+        return dbController.getRequirementInsight();
 
       // DASHBOARD METRICS
       case 'dashboard:metrics':
