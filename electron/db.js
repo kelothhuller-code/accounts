@@ -123,7 +123,6 @@ async function initMongo(uri) {
     isMongoConnected = true;
     mongoError = null;
     console.log('MongoDB connected successfully to:', connectionUri);
-    await loadFromMongo();
     await syncWithMongo();
   } catch (err) {
     isMongoConnected = false;
@@ -328,9 +327,54 @@ try {
   MongoCommitmentWash = mongoose.model('CommitmentWash', CommitmentWashSchema);
 } catch (e) {}
 
+function mergeCollections(localList = [], remoteList = []) {
+  const map = new Map();
+  for (const item of (localList || [])) {
+    if (item && item.id) map.set(item.id, item);
+  }
+  for (const item of (remoteList || [])) {
+    if (item && item.id) {
+      const existing = map.get(item.id);
+      map.set(item.id, existing ? { ...existing, ...item } : item);
+    }
+  }
+  return Array.from(map.values());
+}
+
 async function loadFromMongo() {
+  await syncWithMongo();
+}
+
+async function syncWithMongo() {
   if (!isMongoConnected) return;
   try {
+    // 1. Upload local data to Mongo so any locally added items get pushed to cloud
+    for (const sup of (dbState.suppliers || [])) {
+      await MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true });
+    }
+    for (const arr of (dbState.arrivals || [])) {
+      await MongoArrival.findOneAndUpdate({ id: arr.id }, arr, { upsert: true });
+    }
+    for (const disp of (dbState.dispatches || [])) {
+      await MongoDispatch.findOneAndUpdate({ id: disp.id }, disp, { upsert: true });
+    }
+    for (const com of (dbState.commitments || [])) {
+      await MongoCommitment.findOneAndUpdate({ id: com.id }, com, { upsert: true });
+    }
+    for (const set of (dbState.settlements || [])) {
+      await MongoSettlement.findOneAndUpdate({ id: set.id }, set, { upsert: true });
+    }
+    for (const pay of (dbState.payments || [])) {
+      await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
+    }
+    for (const trf of (dbState.epTransfers || [])) {
+      await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
+    }
+    for (const wash of (dbState.commitmentWashes || [])) {
+      await MongoCommitmentWash.findOneAndUpdate({ id: wash.id }, wash, { upsert: true });
+    }
+
+    // 2. Fetch remote collections from Mongo and merge cleanly
     const [sups, arrs, disps, comms, sets, pays, trfs, washes] = await Promise.all([
       MongoSupplier.find({}).lean(),
       MongoArrival.find({}).lean(),
@@ -342,48 +386,25 @@ async function loadFromMongo() {
       MongoCommitmentWash.find({}).lean(),
     ]);
 
-    dbState.suppliers = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
-    dbState.arrivals = (arrs || []).map(a => { delete a._id; delete a.__v; return a; });
-    dbState.dispatches = (disps || []).map(d => { delete d._id; delete d.__v; return d; });
-    dbState.commitments = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
-    dbState.settlements = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
-    dbState.payments = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
-    dbState.epTransfers = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
-    dbState.commitmentWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
+    const cleanedSups = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
+    const cleanedArrs = (arrs || []).map(a => { delete a._id; delete a.__v; return a; });
+    const cleanedDisps = (disps || []).map(d => { delete d._id; delete d.__v; return d; });
+    const cleanedComms = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
+    const cleanedSets = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
+    const cleanedPays = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
+    const cleanedTrfs = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
+    const cleanedWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
+
+    dbState.suppliers = mergeCollections(dbState.suppliers, cleanedSups);
+    dbState.arrivals = mergeCollections(dbState.arrivals, cleanedArrs);
+    dbState.dispatches = mergeCollections(dbState.dispatches, cleanedDisps);
+    dbState.commitments = mergeCollections(dbState.commitments, cleanedComms);
+    dbState.settlements = mergeCollections(dbState.settlements, cleanedSets);
+    dbState.payments = mergeCollections(dbState.payments, cleanedPays);
+    dbState.epTransfers = mergeCollections(dbState.epTransfers, cleanedTrfs);
+    dbState.commitmentWashes = mergeCollections(dbState.commitmentWashes, cleanedWashes);
 
     saveLocalDb();
-  } catch (err) {
-    console.error('Error loading data from MongoDB:', err);
-  }
-}
-
-async function syncWithMongo() {
-  if (!isMongoConnected) return;
-  try {
-    for (const sup of dbState.suppliers) {
-      await MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true });
-    }
-    for (const arr of dbState.arrivals) {
-      await MongoArrival.findOneAndUpdate({ id: arr.id }, arr, { upsert: true });
-    }
-    for (const disp of dbState.dispatches) {
-      await MongoDispatch.findOneAndUpdate({ id: disp.id }, disp, { upsert: true });
-    }
-    for (const com of dbState.commitments) {
-      await MongoCommitment.findOneAndUpdate({ id: com.id }, com, { upsert: true });
-    }
-    for (const set of dbState.settlements) {
-      await MongoSettlement.findOneAndUpdate({ id: set.id }, set, { upsert: true });
-    }
-    for (const pay of dbState.payments) {
-      await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
-    }
-    for (const trf of dbState.epTransfers) {
-      await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
-    }
-    for (const wash of dbState.commitmentWashes) {
-      await MongoCommitmentWash.findOneAndUpdate({ id: wash.id }, wash, { upsert: true });
-    }
   } catch (err) {
     console.error('Error syncing with MongoDB:', err);
   }
@@ -611,15 +632,6 @@ const dbController = {
 
   async updateMongoUri(uri) {
     dbState.settings.mongoUri = uri;
-    // Clear local cached collections so old local state doesn't pollute new Mongo database
-    dbState.suppliers = [];
-    dbState.arrivals = [];
-    dbState.dispatches = [];
-    dbState.commitments = [];
-    dbState.settlements = [];
-    dbState.payments = [];
-    dbState.epTransfers = [];
-    dbState.commitmentWashes = [];
     saveLocalDb();
 
     if (mongoose.connection.readyState !== 0) {
@@ -727,7 +739,7 @@ const dbController = {
       const summary = calculateSupplierLedger(id);
       saveLocalDb();
       if (isMongoConnected && MongoSupplier) {
-        MongoSupplier.create(newSupplier).catch(e => console.error(e));
+        MongoSupplier.findOneAndUpdate({ id }, newSupplier, { upsert: true }).catch(e => console.error(e));
       }
       return summary;
     } catch (err) {
