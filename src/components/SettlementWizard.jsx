@@ -1,5 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, CheckSquare, Square, AlertCircle, Check, RefreshCw, Handshake, PackageCheck, Truck } from 'lucide-react';
+import { 
+  Layers, 
+  CheckSquare, 
+  Square, 
+  AlertCircle, 
+  Check, 
+  RefreshCw, 
+  Handshake, 
+  PackageCheck, 
+  Truck, 
+  Calculator, 
+  Scale, 
+  Info,
+  DollarSign,
+  ArrowRight
+} from 'lucide-react';
 import { dbAction } from '../utils/api';
 import SearchableSupplierSelect from './SearchableSupplierSelect';
 
@@ -14,15 +29,24 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [commitments, setCommitments] = useState([]);
   
+  // Settlement Mode: 'bags', 'weight', 'end_product'
+  const [settleMode, setSettleMode] = useState('bags');
+  const [settleBagsInput, setSettleBagsInput] = useState('');
+  const [settleWeightInput, setSettleWeightInput] = useState('');
+  const [settleEpInput, setSettleEpInput] = useState('');
+
   // Rate & Commitment mode
   const [rateMode, setRateMode] = useState('manual'); // 'manual' or 'commitment'
   const [selectedCommitmentId, setSelectedCommitmentId] = useState('');
-
-  // Settlement calculation states
-  const [settleBagsInput, setSettleBagsInput] = useState('');
   const [settleRate, setSettleRate] = useState('');
-  const [rateUnit, setRateUnit] = useState('per_kg_ep'); // 'per_kg_ep' or 'per_bag'
+  const [rateUnit, setRateUnit] = useState('per_kg_ep'); // 'per_kg_ep', 'per_bag', 'per_kg_raw'
+
+  // Taxes & Adjustments
   const [tcsRate, setTcsRate] = useState('0.1');
+  const [tdsRate, setTdsRate] = useState('0');
+  const [cgstRate, setCgstRate] = useState('0');
+  const [sgstRate, setSgstRate] = useState('0');
+
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
 
@@ -101,7 +125,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         setStorageItems(pendingDispatches);
         const allIds = pendingDispatches.map(d => d.id);
         setSelectedItemIds(allIds);
-        updateTotalBags(allIds, pendingDispatches);
+        syncInputValues(allIds, pendingDispatches);
       } else {
         // Load unsettled Store In arrivals
         const list = await dbAction('arrivals:get', { supplierId: supId });
@@ -112,7 +136,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         setStorageItems(pendingArrivals);
         const allIds = pendingArrivals.map(a => a.id);
         setSelectedItemIds(allIds);
-        updateTotalBags(allIds, pendingArrivals);
+        syncInputValues(allIds, pendingArrivals);
       }
     } catch (e) {
       setErrorMsg('Failed to load storage items: ' + e.message);
@@ -121,13 +145,22 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     }
   };
 
-  const updateTotalBags = (ids, itemList) => {
-    const activeItems = (itemList || storageItems).filter(item => ids.includes(item.id));
-    const totalBags = activeItems.reduce((sum, item) => {
-      const remBags = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
-      return sum + remBags;
-    }, 0);
-    setSettleBagsInput(String(Math.round(totalBags * 100) / 100));
+  const syncInputValues = (ids, itemList) => {
+    const active = (itemList || storageItems).filter(item => ids.includes(item.id));
+    let tB = 0;
+    let tW = 0;
+    let tEP = 0;
+    active.forEach(item => {
+      const b = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
+      const ep = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
+      const w = item.bags > 0 ? (b / item.bags) * (Number(item.weight) || (b * 50)) : Number(item.weight || (b * 50));
+      tB += b;
+      tW += w;
+      tEP += ep;
+    });
+    setSettleBagsInput(String(Math.round(tB * 100) / 100));
+    setSettleWeightInput(String(Math.round(tW * 100) / 100));
+    setSettleEpInput(String(Math.round(tEP * 100) / 100));
   };
 
   const handleToggleItem = (id) => {
@@ -138,17 +171,19 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
       newSelected = [...selectedItemIds, id];
     }
     setSelectedItemIds(newSelected);
-    updateTotalBags(newSelected);
+    syncInputValues(newSelected);
   };
 
   const handleSelectAll = () => {
     if (selectedItemIds.length === storageItems.length) {
       setSelectedItemIds([]);
       setSettleBagsInput('0');
+      setSettleWeightInput('0');
+      setSettleEpInput('0');
     } else {
       const allIds = storageItems.map(item => item.id);
       setSelectedItemIds(allIds);
-      updateTotalBags(allIds);
+      syncInputValues(allIds);
     }
   };
 
@@ -162,41 +197,65 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   selectedItems.forEach(item => {
     const b = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
     const ep = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
-    const w = item.bags > 0 ? (b / item.bags) * Number(item.weight || (b * 50)) : Number(item.weight || 0);
+    const w = item.bags > 0 ? (b / item.bags) * Number(item.weight || (b * 50)) : Number(item.weight || (b * 50));
 
     totalAvailBags += b;
     totalAvailWeight += w;
     totalAvailEndProduct += ep;
   });
 
-  // Calculate Average Outturn of the combined batch
-  const averageOutturn = totalAvailWeight > 0 ? (totalAvailEndProduct / (totalAvailWeight / 50)) : 0;
-  const averageOutturnPercentage = totalAvailWeight > 0 ? (totalAvailEndProduct / totalAvailWeight) * 100 : 0;
+  // Calculate Weighted Average Outturn of the combined batch
+  const weightedAvgOutturn = totalAvailWeight > 0 ? (totalAvailEndProduct / (totalAvailWeight / 50)) : 0;
+  const weightedAvgYieldPercent = totalAvailWeight > 0 ? (totalAvailEndProduct / totalAvailWeight) * 100 : 0;
 
-  // Settle calculations based on user input bags
-  const bagsToSettle = Math.min(parseFloat(settleBagsInput) || 0, totalAvailBags);
-  
+  // Compute actual settlement quantities based on active settleMode
+  let settledBags = 0;
+  let settledWeight = 0;
   let settledEndProduct = 0;
-  if (bagsToSettle >= totalAvailBags) {
-    settledEndProduct = totalAvailEndProduct;
+
+  if (settleMode === 'weight') {
+    const inW = parseFloat(settleWeightInput) || 0;
+    settledWeight = Math.min(inW, totalAvailWeight);
+    const ratio = totalAvailWeight > 0 ? settledWeight / totalAvailWeight : 0;
+    settledBags = Math.round((totalAvailBags * ratio) * 100) / 100;
+    settledEndProduct = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
+  } else if (settleMode === 'end_product') {
+    const inEP = parseFloat(settleEpInput) || 0;
+    settledEndProduct = Math.min(inEP, totalAvailEndProduct);
+    const ratio = totalAvailEndProduct > 0 ? settledEndProduct / totalAvailEndProduct : 0;
+    settledBags = Math.round((totalAvailBags * ratio) * 100) / 100;
+    settledWeight = Math.round((totalAvailWeight * ratio) * 100) / 100;
   } else {
-    settledEndProduct = bagsToSettle * averageOutturn;
+    // Default 'bags' mode (supports whole & decimal bags like 2, 3.5 bags)
+    const inB = parseFloat(settleBagsInput) || 0;
+    settledBags = Math.min(inB, totalAvailBags);
+    const ratio = totalAvailBags > 0 ? settledBags / totalAvailBags : 0;
+    settledWeight = Math.round((totalAvailWeight * ratio) * 100) / 100;
+    settledEndProduct = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
   }
-  settledEndProduct = Math.round(settledEndProduct * 100) / 100;
 
   const numRate = parseFloat(settleRate) || 0;
   const numTcsRate = parseFloat(tcsRate) || 0;
+  const numTdsRate = parseFloat(tdsRate) || 0;
+  const numCgstRate = parseFloat(cgstRate) || 0;
+  const numSgstRate = parseFloat(sgstRate) || 0;
 
   let grossSettlementAmount = 0;
   if (rateUnit === 'per_bag') {
-    grossSettlementAmount = bagsToSettle * numRate;
+    grossSettlementAmount = settledBags * numRate;
+  } else if (rateUnit === 'per_kg_raw') {
+    grossSettlementAmount = settledWeight * numRate;
   } else {
+    // Standard per_kg_ep
     grossSettlementAmount = settledEndProduct * numRate;
   }
   grossSettlementAmount = Math.round(grossSettlementAmount * 100) / 100;
 
+  const cgstAmount = Math.round((grossSettlementAmount * (numCgstRate / 100)) * 100) / 100;
+  const sgstAmount = Math.round((grossSettlementAmount * (numSgstRate / 100)) * 100) / 100;
   const tcsAmount = Math.round((grossSettlementAmount * (numTcsRate / 100)) * 100) / 100;
-  const netSettlementAmount = Math.round((grossSettlementAmount - tcsAmount) * 100) / 100;
+  const tdsAmount = Math.round((grossSettlementAmount * (numTdsRate / 100)) * 100) / 100;
+  const netSettlementAmount = Math.round((grossSettlementAmount + cgstAmount + sgstAmount - tdsAmount + tcsAmount) * 100) / 100;
 
   const handleExecuteSettlement = async (e) => {
     if (e) e.preventDefault();
@@ -211,8 +270,8 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
       setErrorMsg('Please select at least one storage record to settle');
       return;
     }
-    if (bagsToSettle <= 0) {
-      setErrorMsg('Please enter bags to settle');
+    if (settledBags <= 0 && settledEndProduct <= 0) {
+      setErrorMsg('Please enter a valid quantity to settle');
       return;
     }
     if (numRate <= 0) {
@@ -232,17 +291,23 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         arrivalIds: isSales ? [] : selectedItemIds,
         dispatchIds: isSales ? selectedItemIds : [],
         commitmentId: rateMode === 'commitment' ? selectedCommitmentId : null,
-        settleBags: bagsToSettle,
+        settleMode,
+        settleBags: settledBags,
+        settleWeight: settledWeight,
+        settleEndProduct: settledEndProduct,
         settlementRate: numRate,
         rateUnit,
+        cgstRate: numCgstRate,
+        sgstRate: numSgstRate,
         tcsRate: numTcsRate,
+        tdsRate: numTdsRate,
         date,
         notes
       };
 
       const res = await dbAction('settlements:settle', payload);
 
-      setSuccessMsg(`Settlement ${res.settlementNo} executed successfully for ₹${res.settlementNetAmount.toLocaleString()}!`);
+      setSuccessMsg(`Settlement ${res.settlementNo} executed successfully for ₹${res.settlementNetAmount.toLocaleString('en-IN')}!`);
       await loadStorageItems(selectedSupplierId, settlementCategory);
       await loadSupplierCommitments(selectedSupplierId, settlementCategory);
       if (onSettled) onSettled();
@@ -253,16 +318,18 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     }
   };
 
+  const selectedSupplier = suppliers.find(s => s.id === selectedSupplierId);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div className="card">
-        <div className="card-header">
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="card-title">
             <Layers size={20} color="#92400e" />
             <span>Storage Coffee Settlement Wizard</span>
           </div>
           <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-            Batch Settle Store In (Arrivals) or Store Out (Dispatches) at Agreed Settlement Rates
+            Multi-Lot Outturn & Quantity-Wise Price Settlement (Arrivals & Dispatches)
           </span>
         </div>
 
@@ -271,26 +338,34 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
           <button
             type="button"
             className={`btn ${settlementCategory === 'purchase_storage' ? 'btn-coffee' : 'btn-secondary'}`}
-            style={{ flex: 1, padding: '0.65rem', fontSize: '0.88rem' }}
-            onClick={() => setSettlementCategory('purchase_storage')}
+            style={{ flex: 1, padding: '0.65rem', fontSize: '0.88rem', fontWeight: 600 }}
+            onClick={() => {
+              setSettlementCategory('purchase_storage');
+              setErrorMsg('');
+              setSuccessMsg('');
+            }}
           >
-            <Truck size={16} /> 📦 Purchase Storage (Store In Arrivals)
+            <Truck size={16} /> 📦 Purchase Storage Settlement (Store In Arrivals)
           </button>
           <button
             type="button"
             className={`btn ${settlementCategory === 'sales_storage' ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ flex: 1, padding: '0.65rem', fontSize: '0.88rem' }}
-            onClick={() => setSettlementCategory('sales_storage')}
+            style={{ flex: 1, padding: '0.65rem', fontSize: '0.88rem', fontWeight: 600 }}
+            onClick={() => {
+              setSettlementCategory('sales_storage');
+              setErrorMsg('');
+              setSuccessMsg('');
+            }}
           >
-            <PackageCheck size={16} /> 📤 Sales Storage (Store Out Dispatches)
+            <PackageCheck size={16} /> 📤 Sales Storage Settlement (Store Out Dispatches)
           </button>
         </div>
 
         {/* Step 1: Select Party */}
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-          <div className="form-group" style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label className="form-label">
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', background: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+          <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+              <label className="form-label" style={{ fontWeight: 600, marginBottom: 0 }}>
                 Select Party with {settlementCategory === 'sales_storage' ? 'Store Out Dispatches' : 'Store In Arrivals'}
               </label>
               {onOpenNewSupplier && (
@@ -299,106 +374,137 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
                   onClick={onOpenNewSupplier}
                 >
-                  + New Party (F9)
+                  + Create New Party
                 </button>
               )}
             </div>
             <SearchableSupplierSelect
-              suppliers={suppliers}
               value={selectedSupplierId}
-              onChange={(sId) => setSelectedSupplierId(sId)}
-              onAddNewSupplier={onOpenNewSupplier}
-              placeholder="Search party account..."
+              onChange={(id) => {
+                setSelectedSupplierId(id);
+                setErrorMsg('');
+                setSuccessMsg('');
+              }}
+              placeholder="Search party by name, place, phone..."
             />
           </div>
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => {
-              if (selectedSupplierId) {
-                loadStorageItems(selectedSupplierId, settlementCategory);
-                loadSupplierCommitments(selectedSupplierId, settlementCategory);
-              }
-            }}
-            disabled={!selectedSupplierId || loading}
-          >
-            <RefreshCw size={15} /> Refresh Storage
-          </button>
+
+          {selectedSupplier && (
+            <div style={{ display: 'flex', gap: '0.75rem', background: '#fff', padding: '0.65rem 1rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>Store In Balance</div>
+                <div style={{ fontWeight: 700, color: '#92400e', fontSize: '0.95rem' }}>
+                  {selectedSupplier.storageBags || 0} bags ({selectedSupplier.storageEndProduct?.toLocaleString() || 0} kg EP)
+                </div>
+              </div>
+              <div style={{ borderLeft: '1px solid #e2e8f0', paddingLeft: '0.75rem' }}>
+                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>Ledger Balance</div>
+                <div style={{ fontWeight: 700, color: (selectedSupplier.netPayable || 0) >= 0 ? '#b45309' : '#059669', fontSize: '0.95rem' }}>
+                  ₹{Math.abs(selectedSupplier.netPayable || 0).toLocaleString('en-IN')} {(selectedSupplier.netPayable || 0) >= 0 ? 'Payable' : 'Receivable'}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {errorMsg && (
-          <div style={{ marginTop: '1rem', background: '#fef2f2', border: '1px solid #f87171', color: '#b91c1c', padding: '0.65rem', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-            <AlertCircle size={16} />
-            <span>{errorMsg}</span>
+          <div style={{ padding: '0.75rem 1rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', color: '#b91c1c', fontSize: '0.85rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <AlertCircle size={16} /> {errorMsg}
           </div>
         )}
 
         {successMsg && (
-          <div style={{ marginTop: '1rem', background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#065f46', padding: '0.65rem', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-            <Check size={16} />
-            <span>{successMsg}</span>
+          <div style={{ padding: '0.75rem 1rem', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '6px', color: '#047857', fontSize: '0.85rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Check size={16} /> {successMsg}
           </div>
         )}
-      </div>
 
-      {selectedSupplierId && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.25rem' }}>
-          {/* Left Column: Storage Items Table */}
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title" style={{ fontSize: '0.95rem' }}>
-                <span>{settlementCategory === 'sales_storage' ? 'Unsettled Store Out Dispatches' : 'Unsettled Store In Arrivals'}</span>
-                <span className="badge badge-coffee">{storageItems.length} Available</span>
+        {/* Step 2: Storage Lots Table */}
+        {selectedSupplierId && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span>Unsettled Storage Lots ({storageItems.length})</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 500, color: '#64748b' }}>- Select multiple arrivals to settle as group</span>
               </div>
-              <button 
+              <button
+                type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={handleSelectAll}
-                disabled={storageItems.length === 0}
+                style={{ fontSize: '0.78rem', padding: '0.25rem 0.6rem' }}
               >
-                {selectedItemIds.length === storageItems.length ? 'Deselect All' : 'Select All'}
+                {selectedItemIds.length === storageItems.length ? 'Deselect All' : 'Select All Lots'}
               </button>
             </div>
 
             {loading ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>Loading storage items...</div>
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>Loading storage records...</div>
             ) : storageItems.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.9rem' }}>
+              <div style={{ textAlign: 'center', padding: '2rem', background: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1', color: '#64748b', fontSize: '0.88rem' }}>
                 No unsettled {settlementCategory === 'sales_storage' ? 'Store Out dispatches' : 'Store In arrivals'} found for this party.
               </div>
             ) : (
-              <div className="table-wrapper" style={{ maxHeight: '420px', overflowY: 'auto' }}>
-                <table>
+              <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+                <table className="table" style={{ width: '100%', fontSize: '0.82rem' }}>
                   <thead>
-                    <tr>
-                      <th style={{ width: '40px' }}>Select</th>
-                      <th>Date</th>
-                      <th>Ref #</th>
-                      <th>Product</th>
-                      <th className="num">Rem. Bags</th>
-                      <th className="num">Rem. EP (kg)</th>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ width: '38px', textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedItemIds.length === storageItems.length && storageItems.length > 0}
+                          onChange={handleSelectAll}
+                        />
+                      </th>
+                      <th style={{ textAlign: 'left' }}>Lot / Voucher #</th>
+                      <th style={{ textAlign: 'left' }}>Date</th>
+                      <th style={{ textAlign: 'left' }}>Commodity</th>
+                      <th style={{ textAlign: 'right' }}>Remaining Bags</th>
+                      <th style={{ textAlign: 'right' }}>Remaining Weight</th>
+                      <th style={{ textAlign: 'center' }}>Outturn Test</th>
+                      <th style={{ textAlign: 'right' }}>Remaining EP (kg)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {storageItems.map(item => {
+                    {storageItems.map((item) => {
                       const isSelected = selectedItemIds.includes(item.id);
-                      const remBags = item.remainingBags !== undefined ? item.remainingBags : item.bags;
-                      const remEP = item.remainingEndProduct !== undefined ? item.remainingEndProduct : (item.endProductWeight || item.weight);
+                      const remB = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
+                      const remEP = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
+                      const remW = item.bags > 0 ? (remB / item.bags) * (Number(item.weight) || (remB * 50)) : Number(item.weight || (remB * 50));
+                      const lotOutturn = item.outturn || (remW > 0 ? Math.round((remEP / (remW / 50)) * 100) / 100 : 26);
+                      const yieldPct = remW > 0 ? ((remEP / remW) * 100).toFixed(1) : 52;
 
                       return (
-                        <tr 
-                          key={item.id} 
-                          style={{ cursor: 'pointer', background: isSelected ? '#fffbeb' : 'transparent' }}
+                        <tr
+                          key={item.id}
+                          style={{
+                            background: isSelected ? '#eff6ff' : 'transparent',
+                            borderBottom: '1px solid #f1f5f9',
+                            cursor: 'pointer'
+                          }}
                           onClick={() => handleToggleItem(item.id)}
                         >
+                          <td style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleItem(item.id)}
+                            />
+                          </td>
+                          <td style={{ fontWeight: 600, color: '#1e3a8a' }}>
+                            {item.arrivalNo || item.dispatchNo}
+                          </td>
+                          <td>{item.date}</td>
+                          <td style={{ fontWeight: 500 }}>{item.product}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{remB} bags</td>
+                          <td style={{ textAlign: 'right' }}>{Math.round(remW)} kg</td>
                           <td style={{ textAlign: 'center' }}>
-                            {isSelected ? <CheckSquare size={16} color="#d97706" /> : <Square size={16} color="#94a3b8" />}
+                            <span style={{ background: '#fef3c7', color: '#92400e', padding: '0.15rem 0.45rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
+                              {lotOutturn} kg/50kg ({yieldPct}%)
+                            </span>
                           </td>
-                          <td style={{ fontSize: '0.8rem' }}>{item.date}</td>
-                          <td style={{ fontWeight: 600 }}>{item.arrivalNo || item.dispatchNo}</td>
-                          <td>
-                            <span className="badge badge-coffee">{item.product}</span>
+                          <td style={{ textAlign: 'right', fontWeight: 700, color: '#047857' }}>
+                            {remEP.toLocaleString()} kg
                           </td>
-                          <td className="num" style={{ fontWeight: 600 }}>{remBags}</td>
-                          <td className="num" style={{ fontFamily: 'var(--font-mono)' }}>{remEP ? remEP.toLocaleString() : 0}</td>
                         </tr>
                       );
                     })}
@@ -406,114 +512,247 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                 </table>
               </div>
             )}
-          </div>
 
-          {/* Right Column: Settle Calculation & Execution */}
-          <div className="card">
-            <div className="card-header">
-              <div className="card-title" style={{ fontSize: '0.95rem' }}>
-                <span>{settlementCategory === 'sales_storage' ? 'Sales Settlement Calculation' : 'Purchase Settlement Calculation'}</span>
+            {/* Step 3: Multi-Lot Batch Outturn Analysis Card (USER'S EXPLICIT COFFEE REQUIREMENT) */}
+            {selectedItems.length > 0 && (
+              <div style={{
+                background: 'linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)',
+                border: '1px solid #bfdbfe',
+                borderRadius: '8px',
+                padding: '1rem',
+                marginBottom: '1.25rem'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: '#1e3a8a', fontSize: '0.92rem' }}>
+                    <Scale size={18} color="#2563eb" /> Multi-Lot Batch Outturn Analysis ({selectedItems.length} Lots Selected)
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: '#047857', background: '#dcfce7', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
+                    Weighted Coffee Yield
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+                  <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Total Selected Bags</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>
+                      {Math.round(totalAvailBags * 100) / 100} bags
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Total Raw Weight</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>
+                      {Math.round(totalAvailWeight).toLocaleString()} kg
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Clean End Product (EP)</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#059669' }}>
+                      {Math.round(totalAvailEndProduct).toLocaleString()} kg
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Weighted Batch Outturn</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#b45309' }}>
+                      {weightedAvgOutturn.toFixed(2)} kg/50kg
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                      {weightedAvgYieldPercent.toFixed(1)}% clean yield
+                    </div>
+                  </div>
+                </div>
               </div>
-              <span className="badge badge-blue">{selectedItemIds.length} Selected</span>
-            </div>
+            )}
 
-            {selectedItemIds.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
-                Please select one or more storage records to view settlement calculation.
-              </div>
-            ) : (
-              <form onSubmit={handleExecuteSettlement} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {/* Combined Average Outturn Banner */}
-                <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '0.85rem 1rem' }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#92400e', textTransform: 'uppercase' }}>
-                    Combined Batch Yield Across {selectedItems.length} Records
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '0.35rem' }}>
-                    <div>
-                      <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#78350f', fontFamily: 'var(--font-mono)' }}>
-                        {averageOutturn.toFixed(2)}
-                      </span>
-                      <span style={{ fontSize: '0.85rem', color: '#92400e', marginLeft: '0.25rem' }}>kg per 50kg bag</span>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#78350f' }}>
-                        {averageOutturnPercentage.toFixed(2)}%
-                      </span>
-                      <div style={{ fontSize: '0.72rem', color: '#92400e' }}>Yield Percentage</div>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: '#92400e', marginTop: '0.5rem', display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed #fcd34d', paddingTop: '0.35rem' }}>
-                    <span>Total Selected: {totalAvailBags} Bags</span>
-                    <span>Total EP: {totalAvailEndProduct.toLocaleString()} kg</span>
-                  </div>
+            {/* Step 4: Settlement Configuration Form */}
+            {selectedItems.length > 0 && (
+              <form onSubmit={handleExecuteSettlement} style={{ background: '#fff', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#0f172a', marginBottom: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Calculator size={18} color="#059669" /> Settlement Parameters & Pricing
                 </div>
 
-                {/* Settle Bags Input */}
-                <div className="form-group">
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <label className="form-label">Bags to Settle Now *</label>
-                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
-                      Max: {totalAvailBags} Bags
-                    </span>
-                  </div>
-                  <input
-                    type="number"
-                    step="any"
-                    max={totalAvailBags}
-                    className="form-control num-input"
-                    value={settleBagsInput}
-                    onChange={e => setSettleBagsInput(e.target.value)}
-                    required
-                  />
-                </div>
-
-                {/* Resulting EP */}
-                <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
-                      Equivalent Clean EP Weight
-                    </div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', fontFamily: 'var(--font-mono)' }}>
-                      {settledEndProduct.toLocaleString()} kg
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right', fontSize: '0.75rem', color: '#64748b' }}>
-                    <div>{(settledEndProduct / 100).toFixed(2)} Quintals</div>
-                  </div>
-                </div>
-
-                {/* Rate Mode */}
-                <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.85rem' }}>
-                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+                {/* Settle Mode Selector (By Bags vs By Raw Weight vs By EP kg) */}
+                <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+                  <label className="form-label" style={{ fontWeight: 700, color: '#1e3a8a', marginBottom: '0.4rem' }}>
+                    How would you like to specify the settlement quantity? *
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: '6px',
+                      border: settleMode === 'bags' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      background: settleMode === 'bags' ? '#eff6ff' : '#fff',
+                      cursor: 'pointer'
+                    }}>
                       <input
                         type="radio"
-                        name="rateMode"
-                        checked={rateMode === 'manual'}
-                        onChange={() => setRateMode('manual')}
+                        name="settleMode"
+                        checked={settleMode === 'bags'}
+                        onChange={() => setSettleMode('bags')}
                       />
-                      Fix Agreed Rate Manually
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>By Bag Count</div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>Supports 2, 3.5, 50 bags...</div>
+                      </div>
                     </label>
 
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, color: commitments.length > 0 ? '#2563eb' : '#94a3b8' }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: '6px',
+                      border: settleMode === 'weight' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      background: settleMode === 'weight' ? '#eff6ff' : '#fff',
+                      cursor: 'pointer'
+                    }}>
                       <input
                         type="radio"
-                        name="rateMode"
-                        checked={rateMode === 'commitment'}
-                        onChange={() => {
-                          setRateMode('commitment');
-                          if (commitments.length > 0) applyCommitment(commitments[0]);
-                        }}
-                        disabled={commitments.length === 0}
+                        name="settleMode"
+                        checked={settleMode === 'weight'}
+                        onChange={() => setSettleMode('weight')}
                       />
-                      <Handshake size={14} style={{ display: 'inline' }} />
-                      From {settlementCategory === 'sales_storage' ? 'Sales' : 'Purchase'} Commitment ({commitments.length})
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>By Total Raw Weight (kg)</div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>e.g. 150 kg, 1,000 kg...</div>
+                      </div>
+                    </label>
+
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 0.75rem',
+                      borderRadius: '6px',
+                      border: settleMode === 'end_product' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      background: settleMode === 'end_product' ? '#eff6ff' : '#fff',
+                      cursor: 'pointer'
+                    }}>
+                      <input
+                        type="radio"
+                        name="settleMode"
+                        checked={settleMode === 'end_product'}
+                        onChange={() => setSettleMode('end_product')}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '0.82rem' }}>By Clean End Product (EP)</div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>e.g. 500 kg EP, 2,000 kg EP...</div>
+                      </div>
                     </label>
                   </div>
 
-                  {rateMode === 'commitment' && (
-                    <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-                      <label className="form-label">Select Commitment Contract *</label>
+                  {/* Quantity Input based on mode */}
+                  <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    {settleMode === 'bags' && (
+                      <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                          Enter Bag Count to Settle (Max: {totalAvailBags} bags) *
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          max={totalAvailBags}
+                          min="0.01"
+                          className="form-control"
+                          placeholder="e.g. 2 or 3.5"
+                          value={settleBagsInput}
+                          onChange={e => setSettleBagsInput(e.target.value)}
+                          required
+                        />
+                      </div>
+                    )}
+
+                    {settleMode === 'weight' && (
+                      <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                          Enter Raw Weight to Settle in Kg (Max: {Math.round(totalAvailWeight)} kg) *
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          max={totalAvailWeight}
+                          min="0.1"
+                          className="form-control"
+                          placeholder="e.g. 175"
+                          value={settleWeightInput}
+                          onChange={e => setSettleWeightInput(e.target.value)}
+                          required
+                        />
+                      </div>
+                    )}
+
+                    {settleMode === 'end_product' && (
+                      <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                          Enter Clean EP Weight to Settle in Kg (Max: {Math.round(totalAvailEndProduct)} kg) *
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          max={totalAvailEndProduct}
+                          min="0.1"
+                          className="form-control"
+                          placeholder="e.g. 500"
+                          value={settleEpInput}
+                          onChange={e => setSettleEpInput(e.target.value)}
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ marginTop: '1.25rem', fontSize: '0.78rem' }}
+                      onClick={() => {
+                        setSettleBagsInput(String(totalAvailBags));
+                        setSettleWeightInput(String(Math.round(totalAvailWeight)));
+                        setSettleEpInput(String(Math.round(totalAvailEndProduct)));
+                      }}
+                    >
+                      Fill 100% Full Balance
+                    </button>
+                  </div>
+                </div>
+
+                {/* Settle Rate & Pricing Unit */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.2fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="form-label" style={{ fontWeight: 600 }}>Settlement Rate *</label>
+                      <div style={{ display: 'flex', gap: '0.4rem', fontSize: '0.75rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
+                          <input
+                            type="radio"
+                            name="rateMode"
+                            checked={rateMode === 'manual'}
+                            onChange={() => setRateMode('manual')}
+                          />
+                          <span>Manual</span>
+                        </label>
+                        {commitments.length > 0 && (
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', color: '#2563eb' }}>
+                            <input
+                              type="radio"
+                              name="rateMode"
+                              checked={rateMode === 'commitment'}
+                              onChange={() => {
+                                setRateMode('commitment');
+                                if (commitments[0]) applyCommitment(commitments[0]);
+                              }}
+                            />
+                            <span>Against Contract</span>
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    {rateMode === 'commitment' && commitments.length > 0 ? (
                       <select
                         className="form-control"
                         value={selectedCommitmentId}
@@ -521,70 +760,161 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                       >
                         {commitments.map(c => (
                           <option key={c.id} value={c.id}>
-                            {c.commitmentNo} - {c.product} ({c.remainingQty} {c.type === 'bags' ? 'Bags' : 'kg EP'} @ ₹{c.rate})
+                            {c.commitmentNo} - Rate ₹{c.rate} ({c.type}) - Rem: {c.remainingQty}
                           </option>
                         ))}
                       </select>
-                    </div>
-                  )}
-
-                  <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                    <div className="form-group">
-                      <label className="form-label">Rate Basis</label>
-                      <select
-                        className="form-control"
-                        value={rateUnit}
-                        onChange={e => setRateUnit(e.target.value)}
-                        disabled={rateMode === 'commitment'}
-                      >
-                        <option value="per_kg_ep">Rate per Kg EP</option>
-                        <option value="per_bag">Rate per Bag (50kg)</option>
-                      </select>
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Settlement Rate (₹) *</label>
+                    ) : (
                       <input
                         type="number"
-                        step="any"
-                        className="form-control num-input"
-                        placeholder="₹ rate"
+                        step="0.01"
+                        className="form-control"
+                        placeholder="e.g. 420.00"
                         value={settleRate}
                         onChange={e => setSettleRate(e.target.value)}
                         required
-                        disabled={rateMode === 'commitment'}
                       />
+                    )}
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontWeight: 600 }}>Rate Applied Per *</label>
+                    <select
+                      className="form-control"
+                      value={rateUnit}
+                      onChange={e => setRateUnit(e.target.value)}
+                    >
+                      <option value="per_kg_ep">₹ per Kg of Clean End Product (EP) [Standard Coffee]</option>
+                      <option value="per_bag">₹ per 50kg Bag</option>
+                      <option value="per_kg_raw">₹ per Kg of Raw / Net Weight (Direct)</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontWeight: 600 }}>Settlement Date</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={date}
+                      onChange={e => setDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Taxes & Deductions */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem', background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem' }}>TCS Rate (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="form-control"
+                      value={tcsRate}
+                      onChange={e => setTcsRate(e.target.value)}
+                    />
+                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0.1%</span>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem' }}>TDS Rate (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="form-control"
+                      value={tdsRate}
+                      onChange={e => setTdsRate(e.target.value)}
+                    />
+                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0%</span>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem' }}>CGST Rate (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="form-control"
+                      value={cgstRate}
+                      onChange={e => setCgstRate(e.target.value)}
+                    />
+                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>0% for Raw Coffee</span>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.75rem' }}>SGST Rate (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="form-control"
+                      value={sgstRate}
+                      onChange={e => setSgstRate(e.target.value)}
+                    />
+                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>0% for Raw Coffee</span>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Settlement Notes / Remarks</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Settle 3.5 bags based on agreed market price of Rs 420/kg EP"
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                  />
+                </div>
+
+                {/* Live Voucher Preview & Breakdown */}
+                <div style={{
+                  background: '#0f172a',
+                  color: '#fff',
+                  borderRadius: '8px',
+                  padding: '1.25rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Settlement Voucher Breakdown
+                    </div>
+                    <div style={{ fontSize: '0.88rem', color: '#e2e8f0', marginTop: '0.25rem' }}>
+                      Settling: <strong>{settledBags} bags</strong> ({Math.round(settledWeight)} kg raw) → <strong>{Math.round(settledEndProduct).toLocaleString()} kg EP</strong>
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '0.15rem' }}>
+                      Agreed Rate: ₹{numRate} / {rateUnit.replace('per_', '')} | Avg Batch Outturn: {weightedAvgOutturn.toFixed(2)} kg/50kg
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                      Gross: ₹{grossSettlementAmount.toLocaleString('en-IN')} | TCS: +₹{tcsAmount}
+                    </div>
+                    <div style={{ fontSize: '1.65rem', fontWeight: 800, color: '#38bdf8' }}>
+                      ₹{netSettlementAmount.toLocaleString('en-IN')}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#38bdf8' }}>
+                      Net Settlement Value ({settlementCategory === 'sales_storage' ? 'Receivable' : 'Payable'})
                     </div>
                   </div>
                 </div>
 
-                {/* Summary Card */}
-                <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '0.85rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem', fontSize: '0.85rem' }}>
-                    <span style={{ color: '#64748b' }}>Gross Settlement:</span>
-                    <strong style={{ fontFamily: 'var(--font-mono)' }}>₹{grossSettlementAmount.toLocaleString()}</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '0.5rem', fontSize: '1.05rem' }}>
-                    <span style={{ fontWeight: 600 }}>Net Bill Amount:</span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', color: settlementCategory === 'sales_storage' ? '#2563eb' : '#059669' }}>
-                      ₹{netSettlementAmount.toLocaleString()}
-                    </strong>
-                  </div>
+                <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={submitting || settledBags <= 0 || numRate <= 0}
+                    style={{ padding: '0.75rem 1.75rem', fontSize: '0.95rem', fontWeight: 700 }}
+                  >
+                    <Check size={18} /> {submitting ? 'Executing Settlement...' : 'Execute Storage Settlement'}
+                  </button>
                 </div>
-
-                <button 
-                  type="submit" 
-                  className={`btn ${settlementCategory === 'sales_storage' ? 'btn-primary' : 'btn-coffee'}`}
-                  style={{ width: '100%', padding: '0.75rem', fontSize: '0.95rem' }}
-                  disabled={submitting}
-                >
-                  <Check size={18} /> {submitting ? 'Executing Settlement...' : `Confirm & Bill ${settlementCategory === 'sales_storage' ? 'Sales' : 'Purchase'} Settlement (₹${netSettlementAmount.toLocaleString()})`}
-                </button>
               </form>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

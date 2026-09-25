@@ -166,6 +166,12 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'products:add':
         return dbController.addProduct(payload);
 
+      case 'products:update':
+        return dbController.updateProduct(payload.id, payload.data);
+
+      case 'products:delete':
+        return dbController.deleteProduct(payload.id);
+
       // SUPPLIERS
       case 'suppliers:get':
         return dbController.getSuppliers();

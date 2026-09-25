@@ -165,9 +165,17 @@ export default function ArrivalEntryModal({
   const numTds = parseFloat(tdsRate) || 0;
   const numTcs = parseFloat(tcsRate) || 0;
 
-  // End Product
+  const currentProdName = isCustomProduct ? customProduct : product;
+  const selectedProductObj = products.find(p => p.name === currentProdName || p.code === currentProdName);
+  const isDirectBasis = selectedProductObj 
+    ? selectedProductObj.calculationBasis === 'direct' 
+    : (!currentProdName.toLowerCase().includes('raw') && !currentProdName.toLowerCase().includes('cherry') && !currentProdName.toLowerCase().includes('parchment'));
+
+  // End Product calculation
   let endProductWeight = 0;
-  if (numWeight > 0 && numOutturn > 0) {
+  if (isDirectBasis) {
+    endProductWeight = numWeight;
+  } else if (numWeight > 0 && numOutturn > 0) {
     if (outturnType === 'percentage') {
       endProductWeight = numWeight * (numOutturn / 100);
     } else {
@@ -175,10 +183,20 @@ export default function ArrivalEntryModal({
     }
   }
   endProductWeight = Math.round(endProductWeight * 100) / 100;
-  const outturnPercentage = numWeight > 0 ? ((endProductWeight / numWeight) * 100).toFixed(2) : 0;
+  const outturnPercentage = numWeight > 0 ? ((endProductWeight / numWeight) * 100).toFixed(2) : (isDirectBasis ? 100 : 0);
 
   // Billing
-  let taxableAmount = rateType === 'storage' ? 0 : Math.round((endProductWeight * numRate) * 100) / 100;
+  let taxableAmount = 0;
+  if (rateType !== 'storage') {
+    if (rateUnit === 'per_bag') {
+      taxableAmount = Math.round((numBags * numRate) * 100) / 100;
+    } else if (isDirectBasis || rateUnit === 'per_kg_raw') {
+      taxableAmount = Math.round((numWeight * numRate) * 100) / 100;
+    } else {
+      taxableAmount = Math.round((endProductWeight * numRate) * 100) / 100;
+    }
+  }
+
   let calcCgst = Math.round((taxableAmount * (numCgst / 100)) * 100) / 100;
   let calcSgst = Math.round((taxableAmount * (numSgst / 100)) * 100) / 100;
   let calcIgst = Math.round((taxableAmount * (numIgst / 100)) * 100) / 100;
@@ -242,6 +260,7 @@ export default function ArrivalEntryModal({
       supplierName: selectedSupplier ? selectedSupplier.name : 'Unknown',
       vehicleNo,
       product: finalProduct,
+      calculationBasis: isDirectBasis ? 'direct' : 'end_product',
       weight: numWeight,
       bags: numBags,
       outturn: numOutturn,
@@ -384,15 +403,34 @@ export default function ArrivalEntryModal({
 
           {/* Commodity Product Selection */}
           <div className="form-group">
-            <label className="form-label">Coffee Product / Commodity *</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label className="form-label" style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Coffee Product / Commodity *</label>
+              <span style={{
+                fontSize: '0.73rem',
+                fontWeight: 600,
+                padding: '0.15rem 0.5rem',
+                borderRadius: '4px',
+                background: isDirectBasis ? '#ecfdf5' : '#eff6ff',
+                color: isDirectBasis ? '#047857' : '#1d4ed8'
+              }}>
+                {isDirectBasis ? '🏷️ Main Product (Direct Weight)' : '☕ Raw Coffee (EP via Outturn)'}
+              </span>
+            </div>
             <SearchableProductSelect
               value={product}
               onChange={(pCode, pObj) => {
                 setProduct(pCode);
-                if (pObj && pObj.cgstRate !== undefined) setCgstRate(pObj.cgstRate);
-                if (pObj && pObj.sgstRate !== undefined) setSgstRate(pObj.sgstRate);
+                if (pObj) {
+                  if (pObj.cgstRate !== undefined) setCgstRate(pObj.cgstRate);
+                  if (pObj.sgstRate !== undefined) setSgstRate(pObj.sgstRate);
+                  if (pObj.igstRate !== undefined) setIgstRate(pObj.igstRate);
+                  if (pObj.calculationBasis === 'end_product' && pObj.defaultOutturn) {
+                    setOutturn(String(pObj.defaultOutturn));
+                    if (pObj.defaultOutturnType) setOutturnType(pObj.defaultOutturnType);
+                  }
+                }
               }}
-              category="coffee"
+              category="all"
               placeholder="Search or select coffee commodity..."
             />
           </div>

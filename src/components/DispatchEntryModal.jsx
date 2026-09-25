@@ -214,7 +214,18 @@ export default function DispatchEntryModal({
   const numTds = parseFloat(tdsRate) || 0;
   const numTcs = parseFloat(tcsRate) || 0;
 
-  const calcTaxable = rateType === 'storage_out' ? 0 : Math.round((numWeight * numRate) * 100) / 100;
+  const currentProdName = isCustomProduct ? customProduct : product;
+  const selectedProductObj = products.find(p => p.name === currentProdName || p.code === currentProdName);
+  const isDirectBasis = selectedProductObj 
+    ? selectedProductObj.calculationBasis === 'direct' 
+    : (!currentProdName.toLowerCase().includes('raw') && !currentProdName.toLowerCase().includes('cherry') && !currentProdName.toLowerCase().includes('parchment'));
+
+  const calcTaxable = rateType === 'storage_out' 
+    ? 0 
+    : (isDirectBasis 
+        ? Math.round((numWeight * numRate) * 100) / 100 
+        : Math.round((numEP * numRate) * 100) / 100);
+
   const calcCgst = Math.round((calcTaxable * (numCgst / 100)) * 100) / 100;
   const calcSgst = Math.round((calcTaxable * (numSgst / 100)) * 100) / 100;
   const calcIgst = Math.round((calcTaxable * (numIgst / 100)) * 100) / 100;
@@ -256,6 +267,7 @@ export default function DispatchEntryModal({
         vehicleNo,
         dispatchType,
         product: finalProduct,
+        calculationBasis: isDirectBasis ? 'direct' : 'end_product',
         weight: numWeight,
         bags: numBags,
         endProductWeight: numEP,

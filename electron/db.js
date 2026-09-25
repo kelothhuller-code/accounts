@@ -23,18 +23,19 @@ if (!fs.existsSync(dataDir)) {
 const localDbFile = path.join(dataDir, 'coffee_store.json');
 
 // Initial default products (Coffee = 0% GST, Husk = 2.5% CGST + 2.5% SGST)
+// calculationBasis: 'end_product' (Raw coffee calculated on EP outturn) vs 'direct' (Main Product priced directly on weight/bag)
 const DEFAULT_PRODUCTS = [
-  { id: 'prod_rc_raw', code: 'RC_RAW', name: 'RC Raw', isMain: true, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry Raw Coffee' },
-  { id: 'prod_rc_ep', code: 'RC_EP', name: 'RC EP', isMain: true, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry Clean / End Product' },
-  { id: 'prod_ac_raw', code: 'AC_RAW', name: 'AC Raw', isMain: true, cgstRate: 0, sgstRate: 0, description: 'Arabica Cherry Raw Coffee' },
-  { id: 'prod_husk', code: 'HUSK', name: 'Coffee Husk', isMain: true, cgstRate: 2.5, sgstRate: 2.5, description: 'Coffee Husk (2.5% CGST + 2.5% SGST)' },
-  { id: 'prod_rc_a', code: 'RC_A', name: 'RC A', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry A Grade' },
-  { id: 'prod_rc_b', code: 'RC_B', name: 'RC B', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry B Grade' },
-  { id: 'prod_rc_c', code: 'RC_C', name: 'RC C', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry C Grade' },
-  { id: 'prod_rc_aa', code: 'RC_AA', name: 'RC AA', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry AA Grade' },
-  { id: 'prod_rc_pb', code: 'RC_PB', name: 'RC PB', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry Peaberry' },
-  { id: 'prod_rc_og', code: 'RC_OG', name: 'RC OG', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry Ongoing/Other' },
-  { id: 'prod_rc_bits', code: 'RC_BITS', name: 'RC Bits', isMain: false, cgstRate: 0, sgstRate: 0, description: 'Robusta Cherry Bits / Blacks' },
+  { id: 'prod_rc_raw', code: 'RC_RAW', name: 'RC Raw', isMain: true, calculationBasis: 'end_product', defaultOutturn: 26, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry Raw Coffee (Outturn based)' },
+  { id: 'prod_rc_ep', code: 'RC_EP', name: 'RC EP', isMain: true, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry Clean / End Product (Direct Weight)' },
+  { id: 'prod_ac_raw', code: 'AC_RAW', name: 'AC Raw', isMain: true, calculationBasis: 'end_product', defaultOutturn: 26, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Arabica Cherry Raw Coffee (Outturn based)' },
+  { id: 'prod_husk', code: 'HUSK', name: 'Coffee Husk', isMain: true, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 2.5, sgstRate: 2.5, igstRate: 5, description: 'Coffee Husk (2.5% CGST + 2.5% SGST)' },
+  { id: 'prod_rc_a', code: 'RC_A', name: 'RC A', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry A Grade' },
+  { id: 'prod_rc_b', code: 'RC_B', name: 'RC B', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry B Grade' },
+  { id: 'prod_rc_c', code: 'RC_C', name: 'RC C', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry C Grade' },
+  { id: 'prod_rc_aa', code: 'RC_AA', name: 'RC AA', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry AA Grade' },
+  { id: 'prod_rc_pb', code: 'RC_PB', name: 'RC PB', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry Peaberry' },
+  { id: 'prod_rc_og', code: 'RC_OG', name: 'RC OG', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry Ongoing/Other' },
+  { id: 'prod_rc_bits', code: 'RC_BITS', name: 'RC Bits', isMain: false, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 0, sgstRate: 0, igstRate: 0, description: 'Robusta Cherry Bits / Blacks' },
 ];
 
 // In-Memory & Local File Store State
@@ -86,9 +87,27 @@ function loadLocalDb() {
         products: loaded.products && loaded.products.length > 0 ? loaded.products : DEFAULT_PRODUCTS,
         settings: { ...dbState.settings, ...(loaded.settings || {}) }
       };
+
+      // Ensure all products have calculationBasis and tax rates backfilled
+      dbState.products = dbState.products.map(p => {
+        const isHusk = p.code === 'HUSK' || (p.name || '').toLowerCase().includes('husk');
+        const isRaw = (p.name || '').toLowerCase().includes('raw') || (p.name || '').toLowerCase().includes('cherry') || (p.name || '').toLowerCase().includes('parchment');
+        const cgst = p.cgstRate !== undefined ? Number(p.cgstRate) : (isHusk ? 2.5 : 0);
+        const sgst = p.sgstRate !== undefined ? Number(p.sgstRate) : (isHusk ? 2.5 : 0);
+        return {
+          ...p,
+          calculationBasis: p.calculationBasis || (isRaw ? 'end_product' : 'direct'),
+          defaultOutturn: p.defaultOutturn !== undefined ? Number(p.defaultOutturn) : (isRaw ? 26 : 50),
+          defaultOutturnType: p.defaultOutturnType || 'per_50kg',
+          cgstRate: cgst,
+          sgstRate: sgst,
+          igstRate: p.igstRate !== undefined ? Number(p.igstRate) : (cgst + sgst)
+        };
+      });
+
       // Ensure Husk product exists
       if (!dbState.products.some(p => p.code === 'HUSK')) {
-        dbState.products.push({ id: 'prod_husk', code: 'HUSK', name: 'Coffee Husk', isMain: true, description: 'Coffee Husk (2.5% CGST + 2.5% SGST)' });
+        dbState.products.push({ id: 'prod_husk', code: 'HUSK', name: 'Coffee Husk', isMain: true, calculationBasis: 'direct', defaultOutturn: 50, defaultOutturnType: 'per_50kg', cgstRate: 2.5, sgstRate: 2.5, igstRate: 5, description: 'Coffee Husk (2.5% CGST + 2.5% SGST)' });
       }
       console.log('Local DB store loaded successfully. Suppliers:', dbState.suppliers.length, 'Dispatches:', dbState.dispatches.length);
     } else {
@@ -680,19 +699,69 @@ const dbController = {
     const code = (productData.code || '').toUpperCase().trim();
     const name = (productData.name || '').trim();
     const isHusk = code === 'HUSK' || name.toLowerCase().includes('husk');
+    const isRaw = name.toLowerCase().includes('raw') || name.toLowerCase().includes('cherry') || name.toLowerCase().includes('parchment');
+    const calculationBasis = productData.calculationBasis || (isRaw ? 'end_product' : 'direct');
+    const cgst = productData.cgstRate !== undefined ? Number(productData.cgstRate) : (isHusk ? 2.5 : 0);
+    const sgst = productData.sgstRate !== undefined ? Number(productData.sgstRate) : (isHusk ? 2.5 : 0);
+    const igst = productData.igstRate !== undefined ? Number(productData.igstRate) : (cgst + sgst);
     
     const newProduct = {
       id,
       code,
       name,
-      isMain: productData.isMain || false,
-      cgstRate: productData.cgstRate !== undefined ? Number(productData.cgstRate) : (isHusk ? 2.5 : 0),
-      sgstRate: productData.sgstRate !== undefined ? Number(productData.sgstRate) : (isHusk ? 2.5 : 0),
+      isMain: productData.isMain !== undefined ? !!productData.isMain : true,
+      calculationBasis, // 'direct' (Main Product / Direct Weight) or 'end_product' (Calculated on End Product / Outturn)
+      defaultOutturn: productData.defaultOutturn !== undefined ? Number(productData.defaultOutturn) : (calculationBasis === 'end_product' ? 26 : 50),
+      defaultOutturnType: productData.defaultOutturnType || 'per_50kg',
+      cgstRate: cgst,
+      sgstRate: sgst,
+      igstRate: igst,
+      hsnCode: productData.hsnCode || '',
       description: productData.description || ''
     };
     dbState.products.push(newProduct);
     saveLocalDb();
     return newProduct;
+  },
+
+  updateProduct(id, productData) {
+    const index = dbState.products.findIndex(p => p.id === id);
+    if (index === -1) throw new Error('Product not found');
+    const p = dbState.products[index];
+    const cgst = productData.cgstRate !== undefined ? Number(productData.cgstRate) : (p.cgstRate || 0);
+    const sgst = productData.sgstRate !== undefined ? Number(productData.sgstRate) : (p.sgstRate || 0);
+    const igst = productData.igstRate !== undefined ? Number(productData.igstRate) : (cgst + sgst);
+
+    dbState.products[index] = {
+      ...p,
+      name: productData.name !== undefined ? productData.name.trim() : p.name,
+      code: productData.code !== undefined ? productData.code.trim().toUpperCase() : p.code,
+      isMain: productData.isMain !== undefined ? !!productData.isMain : p.isMain,
+      calculationBasis: productData.calculationBasis || p.calculationBasis || 'direct',
+      defaultOutturn: productData.defaultOutturn !== undefined ? Number(productData.defaultOutturn) : (p.defaultOutturn || 26),
+      defaultOutturnType: productData.defaultOutturnType || p.defaultOutturnType || 'per_50kg',
+      cgstRate: cgst,
+      sgstRate: sgst,
+      igstRate: igst,
+      hsnCode: productData.hsnCode !== undefined ? productData.hsnCode : (p.hsnCode || ''),
+      description: productData.description !== undefined ? productData.description : (p.description || '')
+    };
+    saveLocalDb();
+    return dbState.products[index];
+  },
+
+  deleteProduct(id) {
+    const index = dbState.products.findIndex(p => p.id === id);
+    if (index === -1) return { success: true };
+    const p = dbState.products[index];
+    const isUsed = (dbState.arrivals || []).some(a => a.product === p.name || a.product === p.code) ||
+                   (dbState.dispatches || []).some(d => d.product === p.name || d.product === p.code);
+    if (isUsed) {
+      throw new Error(`Cannot delete commodity "${p.name}" because it is referenced in existing arrivals or dispatches.`);
+    }
+    dbState.products.splice(index, 1);
+    saveLocalDb();
+    return { success: true };
   },
 
   // SUPPLIERS & PARTIES
@@ -1063,11 +1132,20 @@ const dbController = {
     const outturn = Number(data.outturn) || 0;
     const outturnType = data.outturnType || 'per_50kg';
 
+    // Look up product to check calculationBasis if not explicitly passed
+    const prodObj = dbState.products.find(p => p.name === data.product || p.code === data.product);
+    const calculationBasis = data.calculationBasis || (prodObj ? prodObj.calculationBasis : (outturn > 0 ? 'end_product' : 'direct'));
+    const rateUnit = data.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
+
     let endProductWeight = 0;
-    if (outturnType === 'percentage') {
-      endProductWeight = weight * (outturn / 100);
+    if (calculationBasis === 'direct') {
+      endProductWeight = weight;
     } else {
-      endProductWeight = (weight / 50) * outturn;
+      if (outturnType === 'percentage') {
+        endProductWeight = weight * (outturn / 100);
+      } else {
+        endProductWeight = (weight / 50) * outturn;
+      }
     }
     endProductWeight = Math.round(endProductWeight * 100) / 100;
 
@@ -1075,9 +1153,9 @@ const dbController = {
     const billType = data.billType || 'gst_bill';
     let rate = Number(data.rate) || 0;
     let taxableAmount = 0;
-    let cgstRate = billType === 'gst_bill' ? (Number(data.cgstRate) || 2.5) : 0;
-    let sgstRate = billType === 'gst_bill' ? (Number(data.sgstRate) || 2.5) : 0;
-    let igstRate = billType === 'gst_bill' ? (Number(data.igstRate) || 0) : 0;
+    let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : 0) : 0;
+    let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : 0) : 0;
+    let igstRate = billType === 'gst_bill' ? (data.igstRate !== undefined ? Number(data.igstRate) : 0) : 0;
 
     let cgstAmount = 0;
     let sgstAmount = 0;
@@ -1099,7 +1177,7 @@ const dbController = {
       if (comIndex !== -1) {
         const com = dbState.commitments[comIndex];
         rate = com.rate;
-        const qtyToDeduct = com.type === 'bags' ? bags : endProductWeight;
+        const qtyToDeduct = com.type === 'bags' ? bags : (calculationBasis === 'direct' ? weight : endProductWeight);
         const newFulfilled = (com.fulfilledQty || 0) + qtyToDeduct;
         const newRemaining = Math.max(0, com.quantity - newFulfilled);
         
@@ -1121,7 +1199,14 @@ const dbController = {
       tdsAmount = 0; tcsAmount = 0;
       netAmount = 0;
     } else {
-      taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
+      if (rateUnit === 'per_bag') {
+        taxableAmount = Math.round((bags * rate) * 100) / 100;
+      } else if (calculationBasis === 'direct' || rateUnit === 'per_kg_raw') {
+        taxableAmount = Math.round((weight * rate) * 100) / 100;
+      } else {
+        taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
+      }
+
       if (billType === 'gst_bill') {
         if (igstRate > 0) {
           igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
@@ -1147,6 +1232,8 @@ const dbController = {
       supplierName: data.supplierName,
       vehicleNo: data.vehicleNo || '',
       product: data.product,
+      calculationBasis,
+      rateUnit,
       weight,
       bags,
       outturn,
@@ -1201,19 +1288,27 @@ const dbController = {
     const outturn = data.outturn !== undefined ? Number(data.outturn) : arr.outturn;
     const outturnType = data.outturnType || arr.outturnType || 'per_50kg';
 
+    const prodObj = dbState.products.find(p => p.name === (data.product || arr.product) || p.code === (data.product || arr.product));
+    const calculationBasis = data.calculationBasis || arr.calculationBasis || (prodObj ? prodObj.calculationBasis : (outturn > 0 ? 'end_product' : 'direct'));
+    const rateUnit = data.rateUnit || arr.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
+
     let endProductWeight = 0;
-    if (outturnType === 'percentage') {
-      endProductWeight = weight * (outturn / 100);
+    if (calculationBasis === 'direct') {
+      endProductWeight = weight;
     } else {
-      endProductWeight = (weight / 50) * outturn;
+      if (outturnType === 'percentage') {
+        endProductWeight = weight * (outturn / 100);
+      } else {
+        endProductWeight = (weight / 50) * outturn;
+      }
     }
     endProductWeight = Math.round(endProductWeight * 100) / 100;
 
     const rate = data.rate !== undefined ? Number(data.rate) : arr.rate;
     const billType = data.billType || arr.billType || 'gst_bill';
 
-    let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : (arr.cgstRate || 2.5)) : 0;
-    let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (arr.sgstRate || 2.5)) : 0;
+    let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : (arr.cgstRate || 0)) : 0;
+    let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (arr.sgstRate || 0)) : 0;
     let igstRate = billType === 'gst_bill' ? (data.igstRate !== undefined ? Number(data.igstRate) : (arr.igstRate || 0)) : 0;
 
     let tdsRate = data.tdsRate !== undefined ? Number(data.tdsRate) : (arr.tdsRate || 0);
@@ -1229,7 +1324,14 @@ const dbController = {
     let netAmount = 0;
 
     if (arr.status !== 'storage') {
-      taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
+      if (rateUnit === 'per_bag') {
+        taxableAmount = Math.round((bags * rate) * 100) / 100;
+      } else if (calculationBasis === 'direct' || rateUnit === 'per_kg_raw') {
+        taxableAmount = Math.round((weight * rate) * 100) / 100;
+      } else {
+        taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
+      }
+
       if (billType === 'gst_bill') {
         if (igstRate > 0) {
           igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
@@ -1251,6 +1353,8 @@ const dbController = {
       date: data.date || arr.date,
       vehicleNo: data.vehicleNo !== undefined ? data.vehicleNo : arr.vehicleNo,
       product: data.product || arr.product,
+      calculationBasis,
+      rateUnit,
       weight,
       bags,
       outturn,
@@ -1271,8 +1375,8 @@ const dbController = {
       tcsRate,
       tcsAmount,
       netAmount,
-      remainingBags: arr.status === 'storage' ? bags - (arr.settledBags || 0) : arr.remainingBags,
-      remainingEndProduct: arr.status === 'storage' ? endProductWeight - (arr.settledEndProduct || 0) : arr.remainingEndProduct,
+      remainingBags: arr.status === 'storage' ? Math.max(0, bags - (arr.settledBags || 0)) : arr.remainingBags,
+      remainingEndProduct: arr.status === 'storage' ? Math.max(0, endProductWeight - (arr.settledEndProduct || 0)) : arr.remainingEndProduct,
       remarks: data.remarks !== undefined ? data.remarks : arr.remarks
     };
 
@@ -1353,28 +1457,19 @@ const dbController = {
 
     const weight = Number(data.weight) || 0;
     const bags = Number(data.bags) || (weight > 0 ? Math.round((weight / 50) * 100) / 100 : 0);
-    const endProductWeight = Number(data.endProductWeight) || weight;
+    const prodObj = dbState.products.find(p => p.name === data.product || p.code === data.product);
+    const calculationBasis = data.calculationBasis || (prodObj ? prodObj.calculationBasis : (dispatchType === 'husk' ? 'direct' : 'direct'));
+    const rateUnit = data.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
+
+    let endProductWeight = Number(data.endProductWeight) || (calculationBasis === 'direct' ? weight : weight);
 
     const rateType = data.rateType || 'fixed'; // 'fixed', 'commitment', 'storage_out'
     const billType = data.billType || 'gst_bill'; // 'gst_bill' or 'cash_bill'
     let rate = Number(data.rate) || 0;
 
-    // Husk default tax rule: 2.5% CGST + 2.5% SGST (Total 5%) for GST bills
-    let cgstRate = 0;
-    let sgstRate = 0;
-    let igstRate = 0;
-
-    if (billType === 'gst_bill') {
-      if (dispatchType === 'husk') {
-        cgstRate = Number(data.cgstRate) !== undefined ? Number(data.cgstRate) : 2.5;
-        sgstRate = Number(data.sgstRate) !== undefined ? Number(data.sgstRate) : 2.5;
-        igstRate = Number(data.igstRate) || 0;
-      } else {
-        cgstRate = Number(data.cgstRate) || 2.5;
-        sgstRate = Number(data.sgstRate) || 2.5;
-        igstRate = Number(data.igstRate) || 0;
-      }
-    }
+    let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : (dispatchType === 'husk' ? 2.5 : 0)) : 0;
+    let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (dispatchType === 'husk' ? 2.5 : 0)) : 0;
+    let igstRate = billType === 'gst_bill' ? (data.igstRate !== undefined ? Number(data.igstRate) : 0) : 0;
 
     let commitmentId = data.commitmentId || null;
     if (rateType === 'commitment' && commitmentId) {
@@ -1382,7 +1477,7 @@ const dbController = {
       if (comIndex !== -1) {
         const com = dbState.commitments[comIndex];
         rate = com.rate;
-        const qtyToDeduct = com.type === 'bags' ? bags : weight;
+        const qtyToDeduct = com.type === 'bags' ? bags : (rateUnit === 'per_kg_ep' ? endProductWeight : weight);
         const newFulfilled = (com.fulfilledQty || 0) + qtyToDeduct;
         const newRemaining = Math.max(0, com.quantity - newFulfilled);
         dbState.commitments[comIndex] = {
@@ -1410,7 +1505,14 @@ const dbController = {
       status = 'storage_out';
       rate = 0;
     } else {
-      taxableAmount = Math.round((weight * rate) * 100) / 100;
+      if (rateUnit === 'per_bag') {
+        taxableAmount = Math.round((bags * rate) * 100) / 100;
+      } else if (rateUnit === 'per_kg_ep' && calculationBasis === 'end_product') {
+        taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
+      } else {
+        taxableAmount = Math.round((weight * rate) * 100) / 100;
+      }
+
       if (billType === 'gst_bill') {
         if (igstRate > 0) {
           igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
@@ -1437,6 +1539,8 @@ const dbController = {
       vehicleNo: data.vehicleNo || '',
       dispatchType,
       product: data.product,
+      calculationBasis,
+      rateUnit,
       weight,
       bags,
       endProductWeight,
@@ -1457,6 +1561,11 @@ const dbController = {
       tcsAmount,
       netAmount,
       status,
+      settledBags: 0,
+      remainingBags: rateType === 'storage_out' ? bags : 0,
+      settledEndProduct: 0,
+      remainingEndProduct: rateType === 'storage_out' ? endProductWeight : 0,
+      settlementIds: [],
       commitmentId,
       remarks: data.remarks || '',
       createdAt: new Date().toISOString()
@@ -1482,8 +1591,12 @@ const dbController = {
     const billType = data.billType || disp.billType || 'gst_bill';
     const dispatchType = data.dispatchType || disp.dispatchType || 'coffee';
 
-    let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : (disp.cgstRate || (dispatchType === 'husk' ? 2.5 : 2.5))) : 0;
-    let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (disp.sgstRate || (dispatchType === 'husk' ? 2.5 : 2.5))) : 0;
+    const prodObj = dbState.products.find(p => p.name === (data.product || disp.product) || p.code === (data.product || disp.product));
+    const calculationBasis = data.calculationBasis || disp.calculationBasis || (prodObj ? prodObj.calculationBasis : 'direct');
+    const rateUnit = data.rateUnit || disp.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
+
+    let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : (disp.cgstRate || (dispatchType === 'husk' ? 2.5 : 0))) : 0;
+    let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (disp.sgstRate || (dispatchType === 'husk' ? 2.5 : 0))) : 0;
     let igstRate = billType === 'gst_bill' ? (data.igstRate !== undefined ? Number(data.igstRate) : (disp.igstRate || 0)) : 0;
     let tdsRate = data.tdsRate !== undefined ? Number(data.tdsRate) : (disp.tdsRate || 0);
     let tcsRate = data.tcsRate !== undefined ? Number(data.tcsRate) : (disp.tcsRate || 0.1);
@@ -1498,7 +1611,14 @@ const dbController = {
     let netAmount = 0;
 
     if (disp.status !== 'storage_out') {
-      taxableAmount = Math.round((weight * rate) * 100) / 100;
+      if (rateUnit === 'per_bag') {
+        taxableAmount = Math.round((bags * rate) * 100) / 100;
+      } else if (rateUnit === 'per_kg_ep' && calculationBasis === 'end_product') {
+        taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
+      } else {
+        taxableAmount = Math.round((weight * rate) * 100) / 100;
+      }
+
       if (billType === 'gst_bill') {
         if (igstRate > 0) {
           igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
@@ -1523,6 +1643,8 @@ const dbController = {
       vehicleNo: data.vehicleNo !== undefined ? data.vehicleNo : disp.vehicleNo,
       dispatchType,
       product: data.product || disp.product,
+      calculationBasis,
+      rateUnit,
       weight,
       bags,
       endProductWeight,
@@ -1541,6 +1663,8 @@ const dbController = {
       tcsRate,
       tcsAmount,
       netAmount,
+      remainingBags: disp.status === 'storage_out' ? Math.max(0, bags - (disp.settledBags || 0)) : disp.remainingBags,
+      remainingEndProduct: disp.status === 'storage_out' ? Math.max(0, endProductWeight - (disp.settledEndProduct || 0)) : disp.remainingEndProduct,
       remarks: data.remarks !== undefined ? data.remarks : disp.remarks
     };
 
@@ -1647,19 +1771,22 @@ const dbController = {
     return { success: true };
   },
 
-  // SETTLEMENT OF STORAGE COFFEE
-  calculateBatchOutturn(arrivalIds) {
-    const selected = dbState.arrivals.filter(a => arrivalIds.includes(a.id));
+  // SETTLEMENT OF STORAGE COFFEE (PURCHASES & SALES)
+  calculateBatchOutturn(payload) {
+    const ids = Array.isArray(payload) ? payload : (payload?.arrivalIds || payload?.dispatchIds || payload?.itemIds || []);
+    const isSales = payload?.settlementCategory === 'sales_storage' || payload?.category === 'sales_storage';
+    const sourceList = isSales ? dbState.dispatches : dbState.arrivals;
+    const selected = sourceList.filter(item => ids.includes(item.id));
     if (selected.length === 0) return null;
 
     let totalBags = 0;
     let totalWeight = 0;
     let totalEndProduct = 0;
 
-    selected.forEach(arr => {
-      const remBags = arr.remainingBags !== undefined ? Number(arr.remainingBags) : Number(arr.bags);
-      const remEP = arr.remainingEndProduct !== undefined ? Number(arr.remainingEndProduct) : Number(arr.endProductWeight);
-      const remWeight = arr.bags > 0 ? (remBags / arr.bags) * (Number(arr.weight) || 0) : 0;
+    selected.forEach(item => {
+      const remBags = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
+      const remEP = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
+      const remWeight = item.bags > 0 ? (remBags / item.bags) * (Number(item.weight) || (remBags * 50)) : Number(item.weight || (remBags * 50));
 
       totalBags += remBags;
       totalWeight += remWeight;
@@ -1670,12 +1797,22 @@ const dbController = {
     const averageOutturnPercentage = totalWeight > 0 ? (totalEndProduct / totalWeight) * 100 : 0;
 
     return {
-      arrivalCount: selected.length,
+      itemCount: selected.length,
       totalBags: Math.round(totalBags * 100) / 100,
       totalWeight: Math.round(totalWeight * 100) / 100,
       totalEndProduct: Math.round(totalEndProduct * 100) / 100,
       averageOutturn: Math.round(averageOutturn * 100) / 100,
       averageOutturnPercentage: Math.round(averageOutturnPercentage * 100) / 100,
+      items: selected.map(item => ({
+        id: item.id,
+        no: item.arrivalNo || item.dispatchNo,
+        date: item.date,
+        product: item.product,
+        remainingBags: item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags),
+        remainingWeight: item.bags > 0 ? Math.round(((item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags)) / item.bags * (item.weight || 0)) * 100) / 100 : item.weight,
+        remainingEndProduct: item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || 0),
+        outturn: item.outturn || (item.weight > 0 ? Math.round(((item.endProductWeight || item.weight) / (item.weight / 50)) * 100) / 100 : 26)
+      }))
     };
   },
 
@@ -1683,86 +1820,154 @@ const dbController = {
     const {
       supplierId,
       supplierName,
-      arrivalIds,
+      settlementCategory = 'purchase_storage', // 'purchase_storage' or 'sales_storage'
+      arrivalIds = [],
+      dispatchIds = [],
+      settleMode = 'bags', // 'bags', 'weight', 'end_product'
       settleBags,
+      settleWeight,
+      settleEndProduct,
       settlementRate,
-      rateUnit = 'per_kg_ep',
+      rateUnit = 'per_kg_ep', // 'per_kg_ep', 'per_bag', 'per_kg_raw'
       tcsRate = 0.1,
       tdsRate = 0,
+      cgstRate = 0,
+      sgstRate = 0,
+      igstRate = 0,
       date = new Date().toISOString().split('T')[0],
       notes = ''
     } = settleData;
 
-    const selectedArrivals = dbState.arrivals.filter(a => arrivalIds.includes(a.id));
-    if (selectedArrivals.length === 0) throw new Error('No arrivals selected for settlement');
+    const isSales = settlementCategory === 'sales_storage';
+    const targetIds = isSales ? (dispatchIds.length > 0 ? dispatchIds : arrivalIds) : arrivalIds;
+    const sourceList = isSales ? dbState.dispatches : dbState.arrivals;
+
+    const selectedItems = sourceList.filter(item => targetIds.includes(item.id));
+    if (selectedItems.length === 0) {
+      throw new Error(`No ${isSales ? 'dispatches' : 'arrivals'} selected for storage settlement`);
+    }
 
     let totalAvailBags = 0;
     let totalAvailWeight = 0;
     let totalAvailEndProduct = 0;
 
-    selectedArrivals.forEach(arr => {
-      const b = arr.remainingBags !== undefined ? arr.remainingBags : arr.bags;
-      const ep = arr.remainingEndProduct !== undefined ? arr.remainingEndProduct : arr.endProductWeight;
-      const w = arr.bags > 0 ? (b / arr.bags) * arr.weight : 0;
+    selectedItems.forEach(item => {
+      const b = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
+      const ep = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
+      const w = item.bags > 0 ? (b / item.bags) * (Number(item.weight) || (b * 50)) : Number(item.weight || (b * 50));
 
       totalAvailBags += b;
       totalAvailWeight += w;
       totalAvailEndProduct += ep;
     });
 
-    const bagsToSettle = Number(settleBags) || totalAvailBags;
-    if (bagsToSettle > totalAvailBags) {
-      throw new Error(`Cannot settle ${bagsToSettle} bags. Selected arrivals only have ${totalAvailBags} bags available.`);
+    if (totalAvailBags <= 0 && totalAvailWeight <= 0) {
+      throw new Error('Selected records have zero remaining storage quantity to settle.');
     }
 
-    const settleRatio = totalAvailBags > 0 ? bagsToSettle / totalAvailBags : 0;
-    const settledEndProduct = Math.round((totalAvailEndProduct * settleRatio) * 100) / 100;
-    const averageOutturn = totalAvailWeight > 0 ? (totalAvailEndProduct / (totalAvailWeight / 50)) : 0;
+    // Determine exact settlement quantities based on settleMode
+    let bagsToSettle = 0;
+    let weightToSettle = 0;
+    let epToSettle = 0;
+
+    if (settleMode === 'weight' && Number(settleWeight) > 0) {
+      weightToSettle = Math.min(Number(settleWeight), totalAvailWeight);
+      const ratio = totalAvailWeight > 0 ? weightToSettle / totalAvailWeight : 0;
+      bagsToSettle = Math.round((totalAvailBags * ratio) * 100) / 100;
+      epToSettle = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
+    } else if (settleMode === 'end_product' && Number(settleEndProduct) > 0) {
+      epToSettle = Math.min(Number(settleEndProduct), totalAvailEndProduct);
+      const ratio = totalAvailEndProduct > 0 ? epToSettle / totalAvailEndProduct : 0;
+      bagsToSettle = Math.round((totalAvailBags * ratio) * 100) / 100;
+      weightToSettle = Math.round((totalAvailWeight * ratio) * 100) / 100;
+    } else {
+      // Default / Bags mode (supports whole & decimal bags like 2, 3.5 bags)
+      bagsToSettle = Math.min(Number(settleBags) || totalAvailBags, totalAvailBags);
+      const ratio = totalAvailBags > 0 ? bagsToSettle / totalAvailBags : 0;
+      epToSettle = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
+      weightToSettle = Math.round((totalAvailWeight * ratio) * 100) / 100;
+    }
+
+    if (bagsToSettle <= 0 && epToSettle <= 0 && weightToSettle <= 0) {
+      throw new Error('Settlement quantity must be greater than zero.');
+    }
+
+    const averageOutturn = weightToSettle > 0 ? (epToSettle / (weightToSettle / 50)) : (totalAvailWeight > 0 ? (totalAvailEndProduct / (totalAvailWeight / 50)) : 26);
 
     let settlementGrossAmount = 0;
     if (rateUnit === 'per_bag') {
       settlementGrossAmount = bagsToSettle * settlementRate;
+    } else if (rateUnit === 'per_kg_raw' || rateUnit === 'per_kg_weight') {
+      settlementGrossAmount = weightToSettle * settlementRate;
     } else {
-      settlementGrossAmount = settledEndProduct * settlementRate;
+      // Standard per_kg_ep
+      settlementGrossAmount = epToSettle * settlementRate;
     }
     settlementGrossAmount = Math.round(settlementGrossAmount * 100) / 100;
 
-    const tdsAmount = Math.round((settlementGrossAmount * (tdsRate / 100)) * 100) / 100;
-    const tcsAmount = Math.round((settlementGrossAmount * (tcsRate / 100)) * 100) / 100;
-    const settlementNetAmount = Math.round((settlementGrossAmount - tdsAmount + tcsAmount) * 100) / 100;
+    const numCgstRate = Number(cgstRate) || 0;
+    const numSgstRate = Number(sgstRate) || 0;
+    const numIgstRate = Number(igstRate) || 0;
+    const cgstAmount = Math.round((settlementGrossAmount * (numCgstRate / 100)) * 100) / 100;
+    const sgstAmount = Math.round((settlementGrossAmount * (numSgstRate / 100)) * 100) / 100;
+    const igstAmount = Math.round((settlementGrossAmount * (numIgstRate / 100)) * 100) / 100;
+
+    const tdsAmount = Math.round((settlementGrossAmount * (Number(tdsRate) / 100)) * 100) / 100;
+    const tcsAmount = Math.round((settlementGrossAmount * (Number(tcsRate) / 100)) * 100) / 100;
+    const settlementNetAmount = Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount + tcsAmount) * 100) / 100;
 
     const id = 'set_' + Date.now();
     const count = dbState.settlements.length + 1;
     const settlementNo = 'SET-' + String(count).padStart(4, '0');
 
+    // Deduct quantities across selected lots proportionately or FIFO
     let remainingBagsToDeduct = bagsToSettle;
-    selectedArrivals.forEach(arr => {
-      const curRemBags = arr.remainingBags !== undefined ? arr.remainingBags : arr.bags;
-      const curRemEP = arr.remainingEndProduct !== undefined ? arr.remainingEndProduct : arr.endProductWeight;
+    let remainingEPToDeduct = epToSettle;
 
-      if (remainingBagsToDeduct <= 0) return;
+    selectedItems.forEach(item => {
+      const curRemBags = item.remainingBags !== undefined ? Number(item.remainingBags) : Number(item.bags);
+      const curRemEP = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
+
+      if (remainingBagsToDeduct <= 0 && remainingEPToDeduct <= 0) return;
 
       const deductBags = Math.min(curRemBags, remainingBagsToDeduct);
-      const ratio = curRemBags > 0 ? deductBags / curRemBags : 0;
-      const deductEP = Math.round((curRemEP * ratio) * 100) / 100;
+      const deductEP = Math.min(curRemEP, remainingEPToDeduct);
 
       const newRemBags = Math.max(0, curRemBags - deductBags);
       const newRemEP = Math.max(0, curRemEP - deductEP);
 
-      const arrIndex = dbState.arrivals.findIndex(a => a.id === arr.id);
-      if (arrIndex !== -1) {
-        dbState.arrivals[arrIndex] = {
-          ...dbState.arrivals[arrIndex],
-          settledBags: (dbState.arrivals[arrIndex].settledBags || 0) + deductBags,
-          remainingBags: Math.round(newRemBags * 100) / 100,
-          settledEndProduct: (dbState.arrivals[arrIndex].settledEndProduct || 0) + deductEP,
-          remainingEndProduct: Math.round(newRemEP * 100) / 100,
-          status: newRemBags <= 0 ? 'settled' : 'partial_settled',
-          settlementIds: [...(dbState.arrivals[arrIndex].settlementIds || []), id]
-        };
+      const isItemFullySettled = newRemBags <= 0.001;
+
+      if (isSales) {
+        const dIdx = dbState.dispatches.findIndex(d => d.id === item.id);
+        if (dIdx !== -1) {
+          dbState.dispatches[dIdx] = {
+            ...dbState.dispatches[dIdx],
+            settledBags: Math.round(((dbState.dispatches[dIdx].settledBags || 0) + deductBags) * 100) / 100,
+            remainingBags: Math.round(newRemBags * 100) / 100,
+            settledEndProduct: Math.round(((dbState.dispatches[dIdx].settledEndProduct || 0) + deductEP) * 100) / 100,
+            remainingEndProduct: Math.round(newRemEP * 100) / 100,
+            status: isItemFullySettled ? 'settled' : 'partial_settled',
+            settlementIds: [...(dbState.dispatches[dIdx].settlementIds || []), id]
+          };
+        }
+      } else {
+        const aIdx = dbState.arrivals.findIndex(a => a.id === item.id);
+        if (aIdx !== -1) {
+          dbState.arrivals[aIdx] = {
+            ...dbState.arrivals[aIdx],
+            settledBags: Math.round(((dbState.arrivals[aIdx].settledBags || 0) + deductBags) * 100) / 100,
+            remainingBags: Math.round(newRemBags * 100) / 100,
+            settledEndProduct: Math.round(((dbState.arrivals[aIdx].settledEndProduct || 0) + deductEP) * 100) / 100,
+            remainingEndProduct: Math.round(newRemEP * 100) / 100,
+            status: isItemFullySettled ? 'settled' : 'partial_settled',
+            settlementIds: [...(dbState.arrivals[aIdx].settlementIds || []), id]
+          };
+        }
       }
 
-      remainingBagsToDeduct -= deductBags;
+      remainingBagsToDeduct = Math.max(0, remainingBagsToDeduct - deductBags);
+      remainingEPToDeduct = Math.max(0, remainingEPToDeduct - deductEP);
     });
 
     const newSettlement = {
@@ -1771,19 +1976,29 @@ const dbController = {
       date,
       supplierId,
       supplierName,
-      arrivalIds,
+      settlementCategory,
+      arrivalIds: isSales ? [] : targetIds,
+      dispatchIds: isSales ? targetIds : [],
+      settleMode,
       totalSelectedBags: totalAvailBags,
       totalSelectedWeight: Math.round(totalAvailWeight * 100) / 100,
       totalSelectedEndProduct: Math.round(totalAvailEndProduct * 100) / 100,
       averageOutturn: Math.round(averageOutturn * 100) / 100,
       settledBags: bagsToSettle,
-      settledEndProduct,
+      settledWeight: weightToSettle,
+      settledEndProduct: epToSettle,
       settlementRate,
       rateUnit,
       settlementGrossAmount,
-      tcsRate,
+      cgstRate: numCgstRate,
+      cgstAmount,
+      sgstRate: numSgstRate,
+      sgstAmount,
+      igstRate: numIgstRate,
+      igstAmount,
+      tcsRate: Number(tcsRate),
       tcsAmount,
-      tdsRate,
+      tdsRate: Number(tdsRate),
       tdsAmount,
       settlementNetAmount,
       notes,
@@ -1820,6 +2035,8 @@ const dbController = {
     let settlementGrossAmount = 0;
     if (rateUnit === 'per_bag') {
       settlementGrossAmount = st.settledBags * settlementRate;
+    } else if (rateUnit === 'per_kg_raw' || rateUnit === 'per_kg_weight') {
+      settlementGrossAmount = (st.settledWeight || st.settledBags * 50) * settlementRate;
     } else {
       settlementGrossAmount = st.settledEndProduct * settlementRate;
     }
@@ -1827,7 +2044,10 @@ const dbController = {
 
     const tdsAmount = Math.round((settlementGrossAmount * (tdsRate / 100)) * 100) / 100;
     const tcsAmount = Math.round((settlementGrossAmount * (tcsRate / 100)) * 100) / 100;
-    const settlementNetAmount = Math.round((settlementGrossAmount - tdsAmount + tcsAmount) * 100) / 100;
+    const cgstAmount = Number(st.cgstAmount) || 0;
+    const sgstAmount = Number(st.sgstAmount) || 0;
+    const igstAmount = Number(st.igstAmount) || 0;
+    const settlementNetAmount = Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount + tcsAmount) * 100) / 100;
 
     dbState.settlements[index] = {
       ...st,
@@ -1855,6 +2075,7 @@ const dbController = {
     if (index === -1) return { success: true };
     const st = dbState.settlements[index];
 
+    // Restore storage arrivals
     if (st.arrivalIds && st.arrivalIds.length > 0) {
       st.arrivalIds.forEach(arrId => {
         const aIdx = dbState.arrivals.findIndex(a => a.id === arrId);
@@ -1871,6 +2092,28 @@ const dbController = {
             remainingEndProduct: Math.round(newRemEP * 100) / 100,
             status: 'storage',
             settlementIds: (arr.settlementIds || []).filter(sid => sid !== id)
+          };
+        }
+      });
+    }
+
+    // Restore storage dispatches
+    if (st.dispatchIds && st.dispatchIds.length > 0) {
+      st.dispatchIds.forEach(dispId => {
+        const dIdx = dbState.dispatches.findIndex(d => d.id === dispId);
+        if (dIdx !== -1) {
+          const disp = dbState.dispatches[dIdx];
+          const newRemBags = Math.min(disp.bags, (disp.remainingBags || 0) + (disp.settledBags || 0));
+          const newRemEP = Math.min(disp.endProductWeight, (disp.remainingEndProduct || 0) + (disp.settledEndProduct || 0));
+
+          dbState.dispatches[dIdx] = {
+            ...disp,
+            settledBags: 0,
+            remainingBags: Math.round(newRemBags * 100) / 100,
+            settledEndProduct: 0,
+            remainingEndProduct: Math.round(newRemEP * 100) / 100,
+            status: 'storage_out',
+            settlementIds: (disp.settlementIds || []).filter(sid => sid !== id)
           };
         }
       });
@@ -2035,28 +2278,42 @@ const dbController = {
 
   // GLOBAL DASHBOARD METRICS
   getDashboardMetrics(dateFilter = {}) {
-    let arrivals = dbState.arrivals || [];
-    let dispatches = dbState.dispatches || [];
+    let arrivals = (dbState.arrivals || []).slice();
+    let dispatches = (dbState.dispatches || []).slice();
+    let settlements = (dbState.settlements || []).slice();
+
     if (dateFilter.startDate) {
       arrivals = arrivals.filter(a => a.date >= dateFilter.startDate);
       dispatches = dispatches.filter(d => d.date >= dateFilter.startDate);
+      settlements = settlements.filter(s => s.date >= dateFilter.startDate);
     }
     if (dateFilter.endDate) {
       arrivals = arrivals.filter(a => a.date <= dateFilter.endDate);
       dispatches = dispatches.filter(d => d.date <= dateFilter.endDate);
+      settlements = settlements.filter(s => s.date <= dateFilter.endDate);
     }
 
     let dailyTotalWeight = 0;
     let dailyTotalBags = 0;
     let dailyTotalEndProduct = 0;
     let dailyTotalBill = 0;
+    let dailyStorageInBags = 0;
+    let dailyStorageInEP = 0;
     let billedArrivalsCount = 0;
     let totalRateSum = 0;
 
     arrivals.forEach(arr => {
-      dailyTotalWeight += (Number(arr.weight) || 0);
-      dailyTotalBags += (Number(arr.bags) || 0);
-      dailyTotalEndProduct += (Number(arr.endProductWeight) || 0);
+      const w = Number(arr.weight) || 0;
+      const b = Number(arr.bags) || 0;
+      const ep = Number(arr.endProductWeight) || 0;
+      dailyTotalWeight += w;
+      dailyTotalBags += b;
+      dailyTotalEndProduct += ep;
+
+      if (arr.status === 'storage' || arr.status === 'partial_settled') {
+        dailyStorageInBags += (arr.remainingBags !== undefined ? Number(arr.remainingBags) : b);
+        dailyStorageInEP += (arr.remainingEndProduct !== undefined ? Number(arr.remainingEndProduct) : ep);
+      }
       if (arr.status === 'billed' || arr.status === 'cash_bill') {
         dailyTotalBill += (Number(arr.netAmount) || Number(arr.billAmount) || 0);
         if (arr.rate > 0) {
@@ -2069,17 +2326,40 @@ const dbController = {
     let dailyDispatchWeight = 0;
     let dailyDispatchBags = 0;
     let dailyDispatchValue = 0;
+    let dailyStorageOutBags = 0;
+    let dailyStorageOutEP = 0;
+
     dispatches.forEach(d => {
-      dailyDispatchWeight += (Number(d.weight) || 0);
-      dailyDispatchBags += (Number(d.bags) || 0);
-      dailyDispatchValue += (Number(d.netAmount) || Number(d.billAmount) || 0);
+      const w = Number(d.weight) || 0;
+      const b = Number(d.bags) || 0;
+      const ep = Number(d.endProductWeight) || w;
+      dailyDispatchWeight += w;
+      dailyDispatchBags += b;
+      if (d.status === 'storage_out' || d.rateType === 'storage_out') {
+        dailyStorageOutBags += (d.remainingBags !== undefined ? Number(d.remainingBags) : b);
+        dailyStorageOutEP += (d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : ep);
+      } else {
+        dailyDispatchValue += (Number(d.netAmount) || Number(d.billAmount) || 0);
+      }
+    });
+
+    let dailySettledBags = 0;
+    let dailySettledEP = 0;
+    let dailySettledValue = 0;
+    settlements.forEach(s => {
+      dailySettledBags += (Number(s.settledBags) || 0);
+      dailySettledEP += (Number(s.settledEndProduct) || 0);
+      dailySettledValue += (Number(s.settlementNetAmount) || Number(s.settlementGrossAmount) || 0);
     });
 
     const dailyAvgRate = billedArrivalsCount > 0 ? totalRateSum / billedArrivalsCount : 0;
 
+    // Global all-time aggregates
     let totalSuppliers = dbState.suppliers.length;
     let totalStorageBags = 0;
     let totalStorageEP = 0;
+    let totalStoreOutBags = 0;
+    let totalStoreOutEP = 0;
     let totalPurchasesValue = 0;
     let totalSalesValue = 0;
     let totalTcsAllTime = 0;
@@ -2088,11 +2368,55 @@ const dbController = {
     let totalPaidAllTime = 0;
     let totalReceivedAllTime = 0;
 
+    // Commodity-wise stock breakdown map
+    const productStockMap = new Map();
+    (dbState.products || []).forEach(p => {
+      productStockMap.set(p.name, {
+        product: p.name,
+        code: p.code,
+        calculationBasis: p.calculationBasis || 'direct',
+        storeInBags: 0,
+        storeInWeight: 0,
+        storeInEP: 0,
+        storeOutBags: 0,
+        storeOutEP: 0,
+        netBags: 0,
+        netEP: 0,
+        avgOutturn: 0
+      });
+    });
+
     (dbState.arrivals || []).forEach(arr => {
+      const remBags = arr.remainingBags !== undefined ? Number(arr.remainingBags) : Number(arr.bags);
+      const remEP = arr.remainingEndProduct !== undefined ? Number(arr.remainingEndProduct) : Number(arr.endProductWeight);
+      const remWeight = arr.bags > 0 ? (remBags / arr.bags) * (Number(arr.weight) || 0) : Number(arr.weight || 0);
+
       if (arr.status === 'storage' || arr.status === 'partial_settled') {
-        totalStorageBags += (arr.remainingBags !== undefined ? arr.remainingBags : arr.bags);
-        totalStorageEP += (arr.remainingEndProduct !== undefined ? arr.remainingEndProduct : arr.endProductWeight);
+        totalStorageBags += remBags;
+        totalStorageEP += remEP;
+
+        const prodKey = arr.product || 'Other';
+        if (!productStockMap.has(prodKey)) {
+          productStockMap.set(prodKey, {
+            product: prodKey,
+            code: prodKey.toUpperCase().replace(/\s+/g, '_'),
+            calculationBasis: 'end_product',
+            storeInBags: 0,
+            storeInWeight: 0,
+            storeInEP: 0,
+            storeOutBags: 0,
+            storeOutEP: 0,
+            netBags: 0,
+            netEP: 0,
+            avgOutturn: 0
+          });
+        }
+        const item = productStockMap.get(prodKey);
+        item.storeInBags += remBags;
+        item.storeInWeight += remWeight;
+        item.storeInEP += remEP;
       }
+
       if (arr.status === 'billed' || arr.status === 'cash_bill') {
         totalPurchasesValue += (Number(arr.netAmount) || Number(arr.billAmount) || 0);
         totalTcsAllTime += (Number(arr.tcsAmount) || 0);
@@ -2102,6 +2426,21 @@ const dbController = {
     });
 
     (dbState.dispatches || []).forEach(disp => {
+      const remBags = disp.remainingBags !== undefined ? Number(disp.remainingBags) : Number(disp.bags);
+      const remEP = disp.remainingEndProduct !== undefined ? Number(disp.remainingEndProduct) : Number(disp.endProductWeight || disp.weight || 0);
+
+      if (disp.status === 'storage_out' || disp.rateType === 'storage_out' || disp.status === 'partial_settled') {
+        totalStoreOutBags += remBags;
+        totalStoreOutEP += remEP;
+
+        const prodKey = disp.product || 'Other';
+        if (productStockMap.has(prodKey)) {
+          const item = productStockMap.get(prodKey);
+          item.storeOutBags += remBags;
+          item.storeOutEP += remEP;
+        }
+      }
+
       if (disp.status === 'billed' || disp.status === 'cash_bill') {
         totalSalesValue += (Number(disp.netAmount) || Number(disp.billAmount) || 0);
         totalTcsAllTime += (Number(disp.tcsAmount) || 0);
@@ -2111,7 +2450,12 @@ const dbController = {
     });
 
     (dbState.settlements || []).forEach(set => {
-      totalPurchasesValue += (Number(set.settlementNetAmount) || Number(set.settlementGrossAmount) || 0);
+      const bill = Number(set.settlementNetAmount) || Number(set.settlementGrossAmount) || 0;
+      if (set.settlementCategory === 'sales_storage') {
+        totalSalesValue += bill;
+      } else {
+        totalPurchasesValue += bill;
+      }
       totalTcsAllTime += (Number(set.tcsAmount) || 0);
       totalTdsAllTime += (Number(set.tdsAmount) || 0);
     });
@@ -2126,17 +2470,49 @@ const dbController = {
 
     const netPayableGlobal = totalPurchasesValue - totalSalesValue - totalPaidAllTime + totalReceivedAllTime;
 
+    // Convert product stock map to array with rounded values & avg outturn
+    const storageByProduct = Array.from(productStockMap.values())
+      .map(item => {
+        const netBags = Math.round((item.storeInBags - item.storeOutBags) * 100) / 100;
+        const netEP = Math.round((item.storeInEP - item.storeOutEP) * 100) / 100;
+        const avgOutturn = item.storeInWeight > 0 ? Math.round(((item.storeInEP / (item.storeInWeight / 50))) * 100) / 100 : 0;
+        return {
+          ...item,
+          storeInBags: Math.round(item.storeInBags * 100) / 100,
+          storeInWeight: Math.round(item.storeInWeight * 100) / 100,
+          storeInEP: Math.round(item.storeInEP * 100) / 100,
+          storeOutBags: Math.round(item.storeOutBags * 100) / 100,
+          storeOutEP: Math.round(item.storeOutEP * 100) / 100,
+          netBags,
+          netEP,
+          avgOutturn
+        };
+      })
+      .filter(item => item.storeInBags > 0 || item.storeOutBags > 0 || item.netBags > 0);
+
+    const activePurchaseCommitments = (dbState.commitments || []).filter(c => (c.category === 'purchase' || !c.category) && c.status === 'active');
+    const activeSaleCommitments = (dbState.commitments || []).filter(c => c.category === 'sale' && c.status === 'active');
+
     return {
       daily: {
         totalWeight: Math.round(dailyTotalWeight * 100) / 100,
         totalBags: Math.round(dailyTotalBags * 100) / 100,
         totalEndProduct: Math.round(dailyTotalEndProduct * 100) / 100,
         totalBill: Math.round(dailyTotalBill * 100) / 100,
+        storageInBags: Math.round(dailyStorageInBags * 100) / 100,
+        storageInEP: Math.round(dailyStorageInEP * 100) / 100,
         dispatchWeight: Math.round(dailyDispatchWeight * 100) / 100,
         dispatchBags: Math.round(dailyDispatchBags * 100) / 100,
         dispatchValue: Math.round(dailyDispatchValue * 100) / 100,
+        storageOutBags: Math.round(dailyStorageOutBags * 100) / 100,
+        storageOutEP: Math.round(dailyStorageOutEP * 100) / 100,
+        settledBags: Math.round(dailySettledBags * 100) / 100,
+        settledEP: Math.round(dailySettledEP * 100) / 100,
+        settledValue: Math.round(dailySettledValue * 100) / 100,
         avgRate: Math.round(dailyAvgRate * 100) / 100,
-        arrivalsCount: arrivals.length
+        arrivalsCount: arrivals.length,
+        dispatchesCount: dispatches.length,
+        settlementsCount: settlements.length
       },
       global: {
         totalSuppliers,
@@ -2144,13 +2520,23 @@ const dbController = {
         totalSalesValue: Math.round(totalSalesValue * 100) / 100,
         totalStorageBags: Math.round(totalStorageBags * 100) / 100,
         totalStorageEP: Math.round(totalStorageEP * 100) / 100,
+        totalStoreOutBags: Math.round(totalStoreOutBags * 100) / 100,
+        totalStoreOutEP: Math.round(totalStoreOutEP * 100) / 100,
+        netStorageBags: Math.round((totalStorageBags - totalStoreOutBags) * 100) / 100,
+        netStorageEP: Math.round((totalStorageEP - totalStoreOutEP) * 100) / 100,
         totalTcsAllTime: Math.round(totalTcsAllTime * 100) / 100,
         totalTdsAllTime: Math.round(totalTdsAllTime * 100) / 100,
         totalGstAllTime: Math.round(totalGstAllTime * 100) / 100,
         totalPaidAllTime: Math.round(totalPaidAllTime * 100) / 100,
         totalReceivedAllTime: Math.round(totalReceivedAllTime * 100) / 100,
         netPayableGlobal: Math.round(netPayableGlobal * 100) / 100,
-      }
+        activePurchaseCommitmentsCount: activePurchaseCommitments.length,
+        activeSaleCommitmentsCount: activeSaleCommitments.length
+      },
+      storageByProduct,
+      recentArrivals: (dbState.arrivals || []).slice(-8).reverse(),
+      recentDispatches: (dbState.dispatches || []).slice(-8).reverse(),
+      recentSettlements: (dbState.settlements || []).slice(-8).reverse()
     };
   },
 

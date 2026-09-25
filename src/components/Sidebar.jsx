@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 
-export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onOpenCommodity, onOpenSettings, onLock }) {
+export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onOpenNewDispatch, onOpenCommodity, onOpenSettings, onLock }) {
   const [dbStatus, setDbStatus] = useState({ isMongoConnected: false });
 
   useEffect(() => {
@@ -52,13 +52,22 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onO
         </div>
       </div>
 
-      <div style={{ padding: '0.75rem 0.6rem 0.25rem 0.6rem' }}>
+      <div style={{ padding: '0.75rem 0.6rem 0.35rem 0.6rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
         <button 
           className="btn btn-coffee" 
-          style={{ width: '100%', justifyContent: 'center', fontSize: '0.85rem', padding: '0.6rem' }}
+          style={{ width: '100%', justifyContent: 'center', fontSize: '0.82rem', padding: '0.55rem', fontWeight: 600, letterSpacing: '0.01em' }}
           onClick={onOpenNewArrival}
+          title="Record New Inward Arrival (Alt+A / F2)"
         >
-          <PlusCircle size={16} /> New Arrival (Alt+A)
+          <Truck size={15} /> + New Arrival (Alt+A)
+        </button>
+        <button 
+          className="btn btn-primary" 
+          style={{ width: '100%', justifyContent: 'center', fontSize: '0.82rem', padding: '0.55rem', fontWeight: 600, background: 'linear-gradient(135deg, #0284c7, #0369a1)', borderColor: '#0284c7' }}
+          onClick={onOpenNewDispatch}
+          title="Record New Outward Dispatch / Sale (Alt+K / F10)"
+        >
+          <PackageCheck size={15} /> + New Dispatch (Alt+K)
         </button>
       </div>
 
