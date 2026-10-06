@@ -27,6 +27,19 @@ export default function SupplierCreateModal({ isOpen, onClose, onAdded, initialN
     }
   }, [isOpen, initialName]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isOpen, onClose]);
+
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
     const trimmedName = name.trim();
@@ -57,8 +70,16 @@ export default function SupplierCreateModal({ isOpen, onClose, onAdded, initialN
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+    <div
+      className="modal-overlay"
+      style={{ zIndex: 10050, background: 'rgba(15, 23, 42, 0.75)' }}
+      onClick={onClose}
+    >
+      <div
+        className="modal-content"
+        style={{ maxWidth: '480px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="modal-header">
           <div className="modal-title">
             <Users size={18} color="#2563eb" />

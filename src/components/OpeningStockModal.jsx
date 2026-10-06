@@ -34,15 +34,35 @@ export default function OpeningStockModal({
 
   const loadData = async () => {
     try {
-      const sups = await dbAction('suppliers:get');
+      const [sups, sets, insight] = await Promise.all([
+        dbAction('suppliers:get'),
+        dbAction('settings:get'),
+        dbAction('stock:requirement-insight')
+      ]);
       setSuppliers(sups || []);
 
-      // Load opening stock from db
-      const insight = await dbAction('stock:requirement-insight');
-      if (insight) {
-        setCoffeeEP(insight.openingCoffeeEP ? String(insight.openingCoffeeEP) : '');
+      const op = sets?.openingStock || {};
+      if (op.coffeeBags !== undefined && op.coffeeBags !== 0) setCoffeeBags(String(op.coffeeBags));
+      if (op.coffeeWeight !== undefined && op.coffeeWeight !== 0) setCoffeeWeight(String(op.coffeeWeight));
+      if (op.coffeeEP !== undefined && op.coffeeEP !== 0) {
+        setCoffeeEP(String(op.coffeeEP));
+      } else if (insight?.openingCoffeeEP) {
+        setCoffeeEP(String(insight.openingCoffeeEP));
       }
-    } catch (e) {}
+      if (op.huskBags !== undefined && op.huskBags !== 0) setHuskBags(String(op.huskBags));
+      if (op.huskWeight !== undefined && op.huskWeight !== 0) setHuskWeight(String(op.huskWeight));
+    } catch (e) {
+      console.error('Error loading opening stock data:', e);
+    }
+  };
+
+  const handleCoffeeBagsChange = (val) => {
+    setCoffeeBags(val);
+    const num = parseFloat(val);
+    if (!isNaN(num) && num > 0) {
+      if (!coffeeWeight || coffeeWeight === '0') setCoffeeWeight(String(num * 50));
+      if (!coffeeEP || coffeeEP === '0') setCoffeeEP(String(num * 26));
+    }
   };
 
   const handleGlobalStockSubmit = async (e) => {
@@ -198,7 +218,7 @@ export default function OpeningStockModal({
                     className="form-control num-input"
                     placeholder="e.g. 500 bags"
                     value={coffeeBags}
-                    onChange={(e) => setCoffeeBags(e.target.value)}
+                    onChange={(e) => handleCoffeeBagsChange(e.target.value)}
                   />
                 </div>
 

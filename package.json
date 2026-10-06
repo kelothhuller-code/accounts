@@ -1,12 +1,12 @@
 {
   "name": "accountapp",
   "version": "1.0.0",
-  "description": "Coffee Arrival Tracking & Accounting Desktop Application",
-  "author": "CoffeeTracker ERP",
+  "description": "Global Commodity Trading, Inventory & Accounting Desktop Application",
+  "author": "CommodityTracker ERP",
   "main": "electron/main.js",
   "scripts": {
     "dev": "npm run dev:renderer",
-    "dev:renderer": "vite",
+    "dev:renderer": "vite --port 5173",
     "electron:dev": "concurrently \"npm run dev:renderer\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
     "electron:build": "npm run build && electron-builder"
@@ -26,8 +26,8 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.company.coffeetracker",
-    "productName": "CoffeeTracker ERP",
+    "appId": "com.company.commoditytracker",
+    "productName": "CommodityTracker ERP",
     "directories": {
       "output": "dist-electron"
     },

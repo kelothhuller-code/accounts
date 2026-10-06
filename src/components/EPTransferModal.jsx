@@ -15,7 +15,8 @@ export default function EPTransferModal({
   const [toPartyId, setToPartyId] = useState('');
   
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [product, setProduct] = useState('RC EP');
+  const [product, setProduct] = useState('');
+  const [dbProducts, setDbProducts] = useState([]);
   const [bags, setBags] = useState('');
   const [weight, setWeight] = useState('');
   const [endProductWeight, setEndProductWeight] = useState('');
@@ -25,12 +26,50 @@ export default function EPTransferModal({
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [transferType, setTransferType] = useState('store_in'); // 'store_in' or 'store_out'
+  const [availableEP, setAvailableEP] = useState(null);
+  const [checkingStock, setCheckingStock] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
       dbAction('suppliers:get').then(sups => setSuppliers(sups || [])).catch(() => {});
+      dbAction('products:get').then(prods => {
+        setDbProducts(prods || []);
+        if (prods && prods.length > 0 && !product) {
+          setProduct(prods[0].name);
+        }
+      }).catch(() => {});
       setError('');
     }
   }, [isOpen]);
+
+  // Live Check of Source Party Available Stock
+  useEffect(() => {
+    if (fromPartyId && product) {
+      setCheckingStock(true);
+      dbAction('suppliers:get-one', { id: fromPartyId }).then(res => {
+        if (!res) {
+          setAvailableEP(0);
+          return;
+        }
+        const s = res.summary || {};
+        if (transferType === 'store_in') {
+          const openEP = Number(s.openingStorageEP) || 0;
+          const arrEP = (res.arrivals || [])
+            .filter(a => a.product === product && (a.status === 'storage' || a.status === 'partial_settled'))
+            .reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0)), 0);
+          setAvailableEP(openEP + arrEP);
+        } else {
+          const dispEP = (res.dispatches || [])
+            .filter(d => d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'))
+            .reduce((sum, d) => sum + Number(d.endProductWeight || d.weight || 0), 0);
+          setAvailableEP(dispEP);
+        }
+      }).catch(() => setAvailableEP(0)).finally(() => setCheckingStock(false));
+    } else {
+      setAvailableEP(null);
+    }
+  }, [fromPartyId, product, transferType]);
 
   const handleBagsChange = (val) => {
     setBags(val);
@@ -71,12 +110,20 @@ export default function EPTransferModal({
       setError('Please enter a valid transfer quantity or EP weight.');
       return;
     }
+    if (availableEP !== null && numEP > availableEP + 0.001) {
+      const fromPartyName = suppliers.find(s => s.id === fromPartyId)?.name || 'Source Party';
+      const msg = `Transfer Cancelled: Source party '${fromPartyName}' only has ${availableEP.toLocaleString()} kg EP of '${product}' available in ${transferType === 'store_in' ? 'Store-In' : 'Store-Out'} storage. Requested ${numEP.toLocaleString()} kg EP exceeds available balance.`;
+      alert(msg);
+      setError(msg);
+      return;
+    }
 
     setIsSubmitting(true);
     try {
       await dbAction('ep-transfers:add', {
         fromPartyId,
         toPartyId,
+        transferType,
         date,
         product,
         bags: numBags,
@@ -89,6 +136,7 @@ export default function EPTransferModal({
       if (onSaved) onSaved();
       onClose();
     } catch (err) {
+      alert(err.message || 'Failed to execute EP stock transfer.');
       setError(err.message || 'Failed to execute EP stock transfer.');
     } finally {
       setIsSubmitting(false);
@@ -97,13 +145,15 @@ export default function EPTransferModal({
 
   if (!isOpen) return null;
 
+  const fromPartyObj = suppliers.find(s => s.id === fromPartyId);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" style={{ maxWidth: '780px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title">
             <span style={{ fontSize: '1.3rem' }}>🔄</span>
-            <span>EP Coffee Stock Transfer Between Parties</span>
+            <span>EP Commodity Stock Transfer Between Party Ledgers</span>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose}>
             <X size={16} />
@@ -118,6 +168,44 @@ export default function EPTransferModal({
             </div>
           )}
 
+          {/* Transfer Quantity Type Selector */}
+          <div style={{ display: 'flex', gap: '0.5rem', background: '#f8fafc', padding: '0.5rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+            <button
+              type="button"
+              onClick={() => setTransferType('store_in')}
+              style={{
+                flex: 1,
+                padding: '0.5rem',
+                borderRadius: '6px',
+                border: transferType === 'store_in' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                background: transferType === 'store_in' ? '#eff6ff' : '#fff',
+                color: transferType === 'store_in' ? '#1d4ed8' : '#64748b',
+                fontWeight: 700,
+                fontSize: '0.82rem',
+                cursor: 'pointer'
+              }}
+            >
+              📥 Transfer Store-In (Inward Storage Stock)
+            </button>
+            <button
+              type="button"
+              onClick={() => setTransferType('store_out')}
+              style={{
+                flex: 1,
+                padding: '0.5rem',
+                borderRadius: '6px',
+                border: transferType === 'store_out' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                background: transferType === 'store_out' ? '#eff6ff' : '#fff',
+                color: transferType === 'store_out' ? '#1d4ed8' : '#64748b',
+                fontWeight: 700,
+                fontSize: '0.82rem',
+                cursor: 'pointer'
+              }}
+            >
+              📤 Transfer Store-Out (Outward Storage Stock)
+            </button>
+          </div>
+
           {/* Party Selection Box */}
           <div style={{ padding: '1rem', background: '#eff6ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
             <div className="form-grid-2">
@@ -125,21 +213,30 @@ export default function EPTransferModal({
                 <label className="form-label" style={{ color: '#1e40af' }}>Source Party (Deduct EP Stock) *</label>
                 <SearchableSupplierSelect
                   suppliers={suppliers}
-                  value={fromPartyId}
-                  onChange={(sId) => setFromPartyId(sId)}
-                  onAddNewSupplier={onOpenNewSupplier}
-                  placeholder="Select source party..."
+                  selectedSupplierId={fromPartyId}
+                  onSelect={(sId) => setFromPartyId(sId)}
+                  onOpenNewSupplier={onOpenNewSupplier}
+                  label=""
                 />
+                {fromPartyId && (
+                  <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', fontWeight: 700, color: checkingStock ? '#64748b' : (availableEP > 0 ? '#15803d' : '#dc2626') }}>
+                    {checkingStock ? 'Checking stock availability...' : (
+                      availableEP !== null ? (
+                        `Available ${transferType === 'store_in' ? 'Store-In' : 'Store-Out'}: ${availableEP.toLocaleString()} kg EP for '${product}'`
+                      ) : ''
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="form-group">
-                <label className="form-label" style={{ color: '#1e40af' }}>Destination Party (Credit EP Stock) *</label>
+                <label className="form-label" style={{ color: '#1e40af' }}>Destination Party (Credit EP Stock & Billable Inward) *</label>
                 <SearchableSupplierSelect
                   suppliers={suppliers}
-                  value={toPartyId}
-                  onChange={(sId) => setToPartyId(sId)}
-                  onAddNewSupplier={onOpenNewSupplier}
-                  placeholder="Select destination party..."
+                  selectedSupplierId={toPartyId}
+                  onSelect={(sId) => setToPartyId(sId)}
+                  onOpenNewSupplier={onOpenNewSupplier}
+                  label=""
                 />
               </div>
             </div>
@@ -148,23 +245,25 @@ export default function EPTransferModal({
           {/* Product / Commodity Selection & Quick Select Chips */}
           <div className="form-group" style={{ marginTop: '0.5rem' }}>
             <label className="form-label">Commodity Product to Transfer *</label>
-            <div className="product-chips" style={{ marginBottom: '0.4rem' }}>
-              {['RC EP', 'AC EP', 'RC Raw', 'AC Raw', 'Parchment'].map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  className={`product-chip ${product === p ? 'selected' : ['RC EP', 'AC EP'].includes(p) ? 'main-highlight' : ''}`}
-                  onClick={() => setProduct(p)}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
+            {dbProducts && dbProducts.length > 0 && (
+              <div className="product-chips" style={{ marginBottom: '0.4rem' }}>
+                {dbProducts.slice(0, 6).map(p => (
+                  <button
+                    key={p.id || p.name}
+                    type="button"
+                    className={`product-chip ${product === p.name ? 'selected' : p.isMain ? 'main-highlight' : ''}`}
+                    onClick={() => setProduct(p.name)}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <SearchableProductSelect
               value={product}
               onChange={(code) => setProduct(code)}
               placeholder="Select commodity product to transfer..."
-              category="coffee"
+              category="all"
             />
           </div>
 

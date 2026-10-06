@@ -35,6 +35,10 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   const [settleWeightInput, setSettleWeightInput] = useState('');
   const [settleEpInput, setSettleEpInput] = useState('');
 
+  // Agreed Outturn & Direct Weight product options
+  const [agreedOutturnInput, setAgreedOutturnInput] = useState('');
+  const [isDirectWeight, setIsDirectWeight] = useState(false);
+
   // Rate & Commitment mode
   const [rateMode, setRateMode] = useState('manual'); // 'manual' or 'commitment'
   const [selectedCommitmentId, setSelectedCommitmentId] = useState('');
@@ -97,7 +101,9 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     if (!com) return;
     setSelectedCommitmentId(com.id);
     setSettleRate(String(com.rate));
-    setRateUnit(com.type === 'bags' ? 'per_bag' : 'per_kg_ep');
+    if (com.rateUnit) {
+      setRateUnit(com.rateUnit);
+    }
   };
 
   const handleCommitmentChange = (comId) => {
@@ -116,8 +122,6 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         // Load unsettled Store Out dispatches
         const list = await dbAction('dispatches:get', { supplierId: supId });
         const pendingDispatches = (list || []).filter(d => {
-          const isHusk = d.dispatchType === 'husk' || d.product === 'prod_husk' || d.product === 'Husk';
-          if (isHusk) return false;
           const isStoreOut = d.rateType === 'storage_out' || d.status === 'storage_out' || d.status === 'partial_settled';
           const remBags = d.remainingBags !== undefined ? Number(d.remainingBags) : Number(d.bags);
           return isStoreOut && remBags > 0;
@@ -208,7 +212,10 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   const weightedAvgOutturn = totalAvailWeight > 0 ? (totalAvailEndProduct / (totalAvailWeight / 50)) : 0;
   const weightedAvgYieldPercent = totalAvailWeight > 0 ? (totalAvailEndProduct / totalAvailWeight) * 100 : 0;
 
-  // Compute actual settlement quantities based on active settleMode
+  // Effective agreed outturn to apply for calculation
+  const effectiveOutturn = isDirectWeight ? 50 : (parseFloat(agreedOutturnInput) || (weightedAvgOutturn > 0 ? weightedAvgOutturn : 26));
+
+  // Compute actual settlement quantities based on active settleMode & agreed outturn
   let settledBags = 0;
   let settledWeight = 0;
   let settledEndProduct = 0;
@@ -218,20 +225,32 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     settledWeight = Math.min(inW, totalAvailWeight);
     const ratio = totalAvailWeight > 0 ? settledWeight / totalAvailWeight : 0;
     settledBags = Math.round((totalAvailBags * ratio) * 100) / 100;
-    settledEndProduct = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
+    if (isDirectWeight) {
+      settledEndProduct = settledWeight;
+    } else {
+      settledEndProduct = Math.round(((settledWeight / 50) * effectiveOutturn) * 100) / 100;
+    }
   } else if (settleMode === 'end_product') {
     const inEP = parseFloat(settleEpInput) || 0;
     settledEndProduct = Math.min(inEP, totalAvailEndProduct);
-    const ratio = totalAvailEndProduct > 0 ? settledEndProduct / totalAvailEndProduct : 0;
-    settledBags = Math.round((totalAvailBags * ratio) * 100) / 100;
-    settledWeight = Math.round((totalAvailWeight * ratio) * 100) / 100;
+    if (isDirectWeight) {
+      settledWeight = settledEndProduct;
+      settledBags = Math.round((settledEndProduct / 50) * 100) / 100;
+    } else {
+      settledBags = Math.round((effectiveOutturn > 0 ? settledEndProduct / effectiveOutturn : settledEndProduct / 26) * 100) / 100;
+      settledWeight = Math.round((settledBags * 50) * 100) / 100;
+    }
   } else {
-    // Default 'bags' mode (supports whole & decimal bags like 2, 3.5 bags)
+    // Default 'bags' mode
     const inB = parseFloat(settleBagsInput) || 0;
     settledBags = Math.min(inB, totalAvailBags);
     const ratio = totalAvailBags > 0 ? settledBags / totalAvailBags : 0;
-    settledWeight = Math.round((totalAvailWeight * ratio) * 100) / 100;
-    settledEndProduct = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
+    settledWeight = Math.round((totalAvailWeight > 0 ? ratio * totalAvailWeight : settledBags * 50) * 100) / 100;
+    if (isDirectWeight) {
+      settledEndProduct = settledWeight;
+    } else {
+      settledEndProduct = Math.round((settledBags * effectiveOutturn) * 100) / 100;
+    }
   }
 
   const numRate = parseFloat(settleRate) || 0;
@@ -295,6 +314,8 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         settleBags: settledBags,
         settleWeight: settledWeight,
         settleEndProduct: settledEndProduct,
+        agreedOutturn: effectiveOutturn,
+        isDirectWeight,
         settlementRate: numRate,
         rateUnit,
         cgstRate: numCgstRate,
@@ -379,6 +400,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
               )}
             </div>
             <SearchableSupplierSelect
+              suppliers={suppliers}
               value={selectedSupplierId}
               onChange={(id) => {
                 setSelectedSupplierId(id);
@@ -513,7 +535,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
               </div>
             )}
 
-            {/* Step 3: Multi-Lot Batch Outturn Analysis Card (USER'S EXPLICIT COFFEE REQUIREMENT) */}
+            {/* Step 3: Multi-Lot Batch Outturn Analysis & Agreed Outturn Settlement Card */}
             {selectedItems.length > 0 && (
               <div style={{
                 background: 'linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)',
@@ -526,12 +548,27 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: '#1e3a8a', fontSize: '0.92rem' }}>
                     <Scale size={18} color="#2563eb" /> Multi-Lot Batch Outturn Analysis ({selectedItems.length} Lots Selected)
                   </div>
-                  <span style={{ fontSize: '0.75rem', color: '#047857', background: '#dcfce7', padding: '0.15rem 0.5rem', borderRadius: '4px', fontWeight: 600 }}>
-                    Weighted Coffee Yield
-                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className={`btn btn-xs ${!isDirectWeight ? 'btn-coffee' : 'btn-secondary'}`}
+                      style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => setIsDirectWeight(false)}
+                    >
+                      Outturn-Based (Coffee / Parchment)
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-xs ${isDirectWeight ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => setIsDirectWeight(true)}
+                    >
+                      Direct Weight Product (Pepper / Spices)
+                    </button>
+                  </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isDirectWeight ? 'repeat(3, 1fr)' : 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: isDirectWeight ? 0 : '0.85rem' }}>
                   <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
                     <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Total Selected Bags</div>
                     <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>
@@ -553,16 +590,58 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                     </div>
                   </div>
 
-                  <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Weighted Batch Outturn</div>
-                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#b45309' }}>
-                      {weightedAvgOutturn.toFixed(2)} kg/50kg
+                  {!isDirectWeight && (
+                    <div style={{ background: '#fff', padding: '0.65rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Weighted Batch Outturn</div>
+                      <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#b45309' }}>
+                        {weightedAvgOutturn.toFixed(2)} kg/50kg
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                        {weightedAvgYieldPercent.toFixed(1)}% clean yield
+                      </div>
                     </div>
-                    <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                      {weightedAvgYieldPercent.toFixed(1)}% clean yield
+                  )}
+                </div>
+
+                {!isDirectWeight && (
+                  <div style={{
+                    background: '#fff',
+                    padding: '0.75rem',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justify: 'space-between',
+                    gap: '1rem'
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#1e3a8a' }}>
+                        Agreed Settlement Outturn Test (kg per 50kg raw bag)
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                        Settles clean EP across selected lots based on agreed outturn test. (Batch Weighted Avg: <strong>{weightedAvgOutturn.toFixed(2)}</strong> kg/50kg)
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        style={{ width: '130px', fontWeight: 700, textAlign: 'center' }}
+                        className="form-control"
+                        placeholder={weightedAvgOutturn.toFixed(2)}
+                        value={agreedOutturnInput}
+                        onChange={e => setAgreedOutturnInput(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-xs"
+                        onClick={() => setAgreedOutturnInput(weightedAvgOutturn.toFixed(2))}
+                      >
+                        Reset to Avg
+                      </button>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -880,11 +959,16 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                       Settlement Voucher Breakdown
                     </div>
                     <div style={{ fontSize: '0.88rem', color: '#e2e8f0', marginTop: '0.25rem' }}>
-                      Settling: <strong>{settledBags} bags</strong> ({Math.round(settledWeight)} kg raw) → <strong>{Math.round(settledEndProduct).toLocaleString()} kg EP</strong>
+                      Settling: <strong>{settledBags} nominal bags</strong> ({Math.round(settledWeight)} kg raw) → <strong>{Math.round(settledEndProduct).toLocaleString()} kg EP</strong>
                     </div>
                     <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '0.15rem' }}>
-                      Agreed Rate: ₹{numRate} / {rateUnit.replace('per_', '')} | Avg Batch Outturn: {weightedAvgOutturn.toFixed(2)} kg/50kg
+                      Agreed Rate: ₹{numRate} / {rateUnit.replace('per_', '')} {!isDirectWeight && `| Agreed Outturn: ${effectiveOutturn.toFixed(2)} kg/50kg (Batch Avg: ${weightedAvgOutturn.toFixed(2)})`}
                     </div>
+                    {!isDirectWeight && weightedAvgOutturn > 0 && Math.abs(effectiveOutturn - weightedAvgOutturn) > 0.01 && (
+                      <div style={{ fontSize: '0.75rem', color: '#fde047', marginTop: '0.35rem', fontWeight: 600 }}>
+                        💡 Physical Deduction Notice: To deliver {Math.round(settledEndProduct).toLocaleString()} kg EP at agreed outturn ({effectiveOutturn.toFixed(2)}), ~{Math.round(((settledEndProduct / weightedAvgOutturn)) * 100) / 100} physical bags will be deducted from storage lots (outturn {weightedAvgOutturn.toFixed(2)}).
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ textAlign: 'right' }}>

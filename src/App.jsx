@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ShortcutsBar from './components/ShortcutsBar';
 import Dashboard from './components/Dashboard';
+import ArrivalsView from './components/ArrivalsView';
 import SuppliersView from './components/SuppliersView';
 import SupplierLedgerModal from './components/SupplierLedgerModal';
 import ArrivalEntryModal from './components/ArrivalEntryModal';
@@ -16,7 +17,29 @@ import ReportsView from './components/ReportsView';
 import CommodityModal from './components/CommodityModal';
 import SettingsModal from './components/SettingsModal';
 import SupplierCreateModal from './components/SupplierCreateModal';
+import StockManagementView from './components/StockManagementView';
 import LoginScreen from './components/LoginScreen';
+import ErrorBoundary from './components/ErrorBoundary';
+import CalculatorSidebar from './components/CalculatorSidebar';
+
+function getFieldLabel(element) {
+  if (!element) return 'Active Field';
+  if (element.getAttribute('aria-label')) return element.getAttribute('aria-label');
+  if (element.title) return element.title;
+  if (element.id) {
+    const label = document.querySelector(`label[for="${element.id}"]`);
+    if (label && label.innerText) return label.innerText.replace(/\*|:/g, '').trim();
+  }
+  const formGroup = element.closest('.form-group') || element.closest('td') || element.parentElement;
+  if (formGroup) {
+    const label = formGroup.querySelector('label') || formGroup.querySelector('.form-label');
+    if (label && label.innerText) return label.innerText.replace(/\*|:/g, '').trim();
+  }
+  if (element.placeholder) return element.placeholder;
+  if (element.name) return element.name;
+  return 'Active Field';
+}
+
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -48,6 +71,29 @@ export default function App() {
   const [showCommodityModal, setShowCommodityModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showSupplierModal, setShowSupplierModal] = useState(false);
+
+  // Calculator State
+  const [showCalculator, setShowCalculator] = useState(false);
+  const [calcTargetElement, setCalcTargetElement] = useState(null);
+  const [calcTargetLabel, setCalcTargetLabel] = useState('');
+
+  const toggleCalculator = () => {
+    setShowCalculator(prev => {
+      if (!prev) {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && !active.disabled && !active.readOnly) {
+          setCalcTargetElement(active);
+          setCalcTargetLabel(getFieldLabel(active));
+        } else {
+          setCalcTargetElement(null);
+          setCalcTargetLabel('');
+        }
+        return true;
+      } else {
+        return false;
+      }
+    });
+  };
 
   const [triggerNewInTab, setTriggerNewInTab] = useState(0);
   const [triggerExportInTab, setTriggerExportInTab] = useState(0);
@@ -89,6 +135,18 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Calculator shortcuts: F11 anywhere, or Alt+C when focused inside an input field
+      const isInputFocused = document.activeElement && 
+        (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') &&
+        !document.activeElement.disabled && !document.activeElement.readOnly;
+
+      if (e.key === 'F11' || (e.altKey && (e.key === 'c' || e.key === 'C') && isInputFocused)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCalculator();
+        return;
+      }
+
       if (e.key === 'Escape') {
         closeAllModals();
         return;
@@ -97,7 +155,7 @@ export default function App() {
       const key = e.key.toUpperCase();
       const isAltOrCtrl = e.altKey || e.ctrlKey;
 
-      if (['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10'].includes(e.key)) {
+      if (['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11'].includes(e.key)) {
         e.preventDefault();
       }
 
@@ -151,9 +209,10 @@ export default function App() {
         e.preventDefault();
         setTriggerExportInTab(v => v + 1);
       }
-      else if (e.key === 'F8') {
+      else if ((isAltOrCtrl && key === 'G') || e.key === 'F8') {
         e.preventDefault();
-        setShowCommodityModal(true);
+        closeAllModals();
+        setActiveTab('stock');
       }
     };
 
@@ -185,10 +244,11 @@ export default function App() {
   return (
     <div className="app-container">
       {/* Sidebar Navigation */}
-      <Sidebar 
-        activeTab={activeTab} 
+      <Sidebar
+        activeTab={activeTab}
         setActiveTab={(tab) => { closeAllModals(); setActiveTab(tab); }}
         onOpenNewArrival={() => { closeAllModals(); setArrivalPrefillSupplierId(null); setShowArrivalModal(true); }}
+        onOpenNewDispatch={() => { closeAllModals(); openNewDispatch(); }}
         onOpenCommodity={() => setShowCommodityModal(true)}
         onOpenSettings={() => setShowSettingsModal(true)}
         onLock={() => {
@@ -203,39 +263,33 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             <h1 className="page-title">
-              {activeTab === 'dashboard' && '🏢 Executive Dashboard'}
-              {activeTab === 'arrivals' && '🚛 Coffee Arrival Management (Purchases)'}
-              {activeTab === 'dispatches' && '📤 Dispatches & Sales Management'}
-              {activeTab === 'suppliers' && '👥 Supplier & Customer Master Accounts'}
-              {activeTab === 'settlement' && '⚖️ Storage Coffee Settlement Wizard'}
+              {activeTab === 'dashboard' && '🏢 Executive ERP Dashboard'}
+              {activeTab === 'arrivals' && '🚛 Inward Commodity Arrivals (Purchases)'}
+              {activeTab === 'dispatches' && '📤 Outward Dispatches & Sales Management'}
+              {activeTab === 'suppliers' && '👥 Party Accounts Master & Ledgers (Buyers & Sellers)'}
+              {activeTab === 'stock' && '🏢 Godown Stock & Commodity Processing Hub'}
+              {activeTab === 'settlement' && '⚖️ Storage Commodity Settlement Wizard'}
               {activeTab === 'payments' && '💳 Payment & TCS Management'}
               {activeTab === 'commitments' && '🤝 Purchase & Sales Commitments'}
-              {activeTab === 'reports' && '📊 Financial & Stock Reports'}
+              {activeTab === 'reports' && '📑 Sales & Purchase Settlement Reports'}
             </h1>
           </div>
 
           <div className="topbar-right">
-            <button 
-              className="btn btn-warning btn-sm"
-              style={{ background: '#0284c7', borderColor: '#0284c7', color: '#fff' }}
-              onClick={() => setShowOpeningStockModal(true)}
-            >
-              📦 Opening Stock
-            </button>
-            <button 
+            <button
               className="btn btn-secondary btn-sm"
               style={{ color: '#2563eb', borderColor: '#bfdbfe' }}
               onClick={() => setShowEpTransferModal(true)}
             >
               ⇄ EP Transfer
             </button>
-            <button 
+            <button
               className="btn btn-coffee btn-sm"
               onClick={() => openNewDispatch()}
             >
               + New Dispatch (F10)
             </button>
-            <button 
+            <button
               className="btn btn-primary btn-sm"
               onClick={() => { closeAllModals(); setArrivalPrefillSupplierId(null); setShowArrivalModal(true); }}
             >
@@ -249,15 +303,20 @@ export default function App() {
             <Dashboard
               dataVersion={dataVersion}
               onOpenNewArrival={() => openNewArrival(null)}
+              onOpenNewDispatch={openNewDispatch}
               onEditArrival={openEditArrival}
               onSelectSupplier={handleOpenLedger}
               onOpenSettlement={() => setActiveTab('settlement')}
+              onOpenCommitment={() => { setActiveTab('commitments'); setTimeout(() => setTriggerNewInTab(v => v + 1), 50); }}
+              onOpenPayment={() => { setActiveTab('payments'); setTimeout(() => setTriggerNewInTab(v => v + 1), 50); }}
+              onOpenCommodity={() => setShowCommodityModal(true)}
+              onOpenOpeningStock={() => setShowOpeningStockModal(true)}
               triggerExport={triggerExportInTab}
             />
           )}
 
           {activeTab === 'arrivals' && (
-            <Dashboard
+            <ArrivalsView
               dataVersion={dataVersion}
               onOpenNewArrival={() => openNewArrival(null)}
               onEditArrival={openEditArrival}
@@ -268,15 +327,18 @@ export default function App() {
           )}
 
           {activeTab === 'dispatches' && (
-            <DispatchesView
-              dataVersion={dataVersion}
-              onOpenNewDispatch={openNewDispatch}
-              onEditDispatch={openEditDispatch}
-              onSelectSupplier={handleOpenLedger}
-              triggerNew={triggerNewInTab}
-              triggerExport={triggerExportInTab}
-            />
+            <ErrorBoundary name="Dispatches & Sales" onRetry={triggerRefresh}>
+              <DispatchesView
+                dataVersion={dataVersion}
+                onOpenNewDispatch={openNewDispatch}
+                onEditDispatch={openEditDispatch}
+                onSelectSupplier={handleOpenLedger}
+                triggerNew={triggerNewInTab}
+                triggerExport={triggerExportInTab}
+              />
+            </ErrorBoundary>
           )}
+
 
           {activeTab === 'suppliers' && (
             <SuppliersView
@@ -286,6 +348,15 @@ export default function App() {
               triggerNew={triggerNewInTab}
               triggerExport={triggerExportInTab}
               onAddArrivalForSupplier={(supId) => openNewArrival(supId)}
+              onOpenNewSupplier={() => setShowSupplierModal(true)}
+            />
+          )}
+
+          {activeTab === 'stock' && (
+            <StockManagementView
+              onOpenLedger={handleOpenLedger}
+              dataVersion={dataVersion}
+              onDataChanged={triggerRefresh}
               onOpenNewSupplier={() => setShowSupplierModal(true)}
             />
           )}
@@ -322,7 +393,11 @@ export default function App() {
           )}
 
           {activeTab === 'reports' && (
-            <ReportsView dataVersion={dataVersion} triggerExport={triggerExportInTab} />
+            <ReportsView
+              dataVersion={dataVersion}
+              triggerExport={triggerExportInTab}
+              onOpenSettlement={() => setActiveTab('settlement')}
+            />
           )}
         </main>
 
@@ -348,6 +423,7 @@ export default function App() {
         onSaved={triggerRefresh}
         onOpenNewSupplier={() => setShowSupplierModal(true)}
         dataVersion={dataVersion}
+        lastAddedSupplier={lastAddedSupplier}
       />
 
       <EPTransferModal
@@ -363,15 +439,18 @@ export default function App() {
         onSaved={triggerRefresh}
       />
 
-      <SupplierLedgerModal
-        isOpen={showLedgerModal}
-        onClose={() => setShowLedgerModal(false)}
-        supplierId={selectedSupplierId}
-        onDataChanged={triggerRefresh}
-        onOpenArrivalWithSupplier={(supId) => openNewArrival(supId)}
-        onOpenEditArrival={openEditArrival}
-        onOpenSettlementWithSupplier={handleOpenSettlementFromLedger}
-      />
+      <ErrorBoundary name="Party Ledger Modal" onRetry={() => setShowLedgerModal(false)}>
+        <SupplierLedgerModal
+          isOpen={showLedgerModal}
+          onClose={() => setShowLedgerModal(false)}
+          supplierId={selectedSupplierId}
+          onDataChanged={triggerRefresh}
+          onOpenArrivalWithSupplier={(supId) => openNewArrival(supId)}
+          onOpenEditArrival={openEditArrival}
+          onOpenEditDispatch={openEditDispatch}
+          onOpenSettlementWithSupplier={handleOpenSettlementFromLedger}
+        />
+      </ErrorBoundary>
 
       <CommodityModal
         isOpen={showCommodityModal}
@@ -390,6 +469,64 @@ export default function App() {
         onAdded={(newSup) => {
           setLastAddedSupplier(newSup);
           triggerRefresh();
+        }}
+      />
+
+      {/* Persistent Right-Edge Calculator Floating Tab */}
+      {!showCalculator && (
+        <button
+          type="button"
+          onClick={toggleCalculator}
+          className="calculator-floating-tab"
+          title="Open Quick Calculator (F11 / Alt+C in input)"
+          style={{
+            position: 'fixed',
+            right: 0,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 9998,
+            background: 'linear-gradient(180deg, #1e293b, #0f172a)',
+            color: '#38bdf8',
+            border: '1px solid #334155',
+            borderRight: 'none',
+            borderTopLeftRadius: '8px',
+            borderBottomLeftRadius: '8px',
+            padding: '10px 7px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '6px',
+            cursor: 'pointer',
+            boxShadow: '-3px 2px 12px rgba(0,0,0,0.3)',
+            transition: 'all 0.2s ease',
+            fontSize: '0.72rem',
+            fontWeight: 700
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.background = '#2563eb';
+            e.currentTarget.style.color = '#ffffff';
+            e.currentTarget.style.transform = 'translateY(-50%) translateX(-2px)';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = 'linear-gradient(180deg, #1e293b, #0f172a)';
+            e.currentTarget.style.color = '#38bdf8';
+            e.currentTarget.style.transform = 'translateY(-50%)';
+          }}
+        >
+          <span style={{ fontSize: '1.2rem' }}>🧮</span>
+          <span style={{ writingMode: 'vertical-rl', letterSpacing: '1px', textOrientation: 'mixed' }}>CALC</span>
+          <span style={{ fontSize: '0.62rem', background: '#334155', color: '#e2e8f0', padding: '2px 4px', borderRadius: '3px' }}>F11</span>
+        </button>
+      )}
+
+      {/* Quick Calculator Sidebar */}
+      <CalculatorSidebar
+        isOpen={showCalculator}
+        onClose={() => setShowCalculator(false)}
+        targetElement={calcTargetElement}
+        targetLabel={calcTargetLabel}
+        onPasted={() => {
+          // target received paste
         }}
       />
     </div>

@@ -12,6 +12,7 @@ export default function ShortcutsBar() {
     { key: 'F7 / Alt+R', label: 'Reports' },
     { key: 'F8', label: 'Add Commodity' },
     { key: 'F9', label: 'New Party' },
+    { key: 'F11 / Alt+C', label: 'Calculator' },
     { key: 'Alt+E', label: 'Export CSV' },
     { key: 'Esc', label: 'Close Modal' },
   ];

@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, ChevronDown, UserPlus, X, Check, MapPin, Phone } from 'lucide-react';
+import { dbAction } from '../utils/api';
 
 export default function SearchableSupplierSelect({
-  suppliers = [],
+  suppliers: propSuppliers = null,
   value = '',
+  selectedSupplierId = '',
   onChange,
+  onSelect,
   onAddNewSupplier,
+  onOpenNewSupplier,
+  label = '',
   placeholder = 'Search supplier name, place, phone...',
   autoFocus = false,
   disabled = false,
   className = '',
   style = {}
 }) {
+  const [internalSuppliers, setInternalSuppliers] = useState([]);
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -19,7 +25,19 @@ export default function SearchableSupplierSelect({
   const containerRef = useRef(null);
   const searchInputRef = useRef(null);
 
-  const selectedSupplier = suppliers.find(s => s.id === value);
+  useEffect(() => {
+    if (!propSuppliers || propSuppliers.length === 0) {
+      dbAction('suppliers:get').then(res => {
+        if (res && Array.isArray(res)) {
+          setInternalSuppliers(res);
+        }
+      }).catch(console.error);
+    }
+  }, [propSuppliers]);
+
+  const activeValue = value || selectedSupplierId || '';
+  const suppliers = (propSuppliers && propSuppliers.length > 0) ? propSuppliers : internalSuppliers;
+  const selectedSupplier = suppliers.find(s => s.id === activeValue);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -56,9 +74,16 @@ export default function SearchableSupplierSelect({
   };
 
   const handleSelect = (supplier) => {
-    onChange(supplier.id, supplier);
+    if (onChange) onChange(supplier.id, supplier);
+    if (onSelect) onSelect(supplier.id, supplier.name, supplier);
     setIsOpen(false);
     setSearchTerm('');
+  };
+
+  const handleAddNew = () => {
+    if (onAddNewSupplier) onAddNewSupplier();
+    if (onOpenNewSupplier) onOpenNewSupplier();
+    setIsOpen(false);
   };
 
   const handleKeyDown = (e) => {
@@ -82,9 +107,8 @@ export default function SearchableSupplierSelect({
       e.preventDefault();
       if (filteredSuppliers.length > 0 && highlightedIndex < filteredSuppliers.length) {
         handleSelect(filteredSuppliers[highlightedIndex]);
-      } else if (onAddNewSupplier) {
-        onAddNewSupplier();
-        setIsOpen(false);
+      } else {
+        handleAddNew();
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();

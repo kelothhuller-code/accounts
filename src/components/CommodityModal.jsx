@@ -86,13 +86,6 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
       const suggested = val.toUpperCase().replace(/[^A-Z0-9]/g, '_').replace(/_+/g, '_').slice(0, 12);
       setCode(suggested);
     }
-    // Infer calculation basis if husk
-    if (val.toLowerCase().includes('husk')) {
-      setCalculationBasis('direct');
-      setCgstRate('2.5');
-      setSgstRate('2.5');
-      setDefaultOutturn('50');
-    }
   };
 
   const handleSubmit = async (e) => {
@@ -391,8 +384,38 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
               </div>
             </div>
 
-            {/* Row 4: Description & Main Product Toggle */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: '0.75rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+            {/* Commodity Classification: Primary Stock vs Secondary Product */}
+            <div style={{ background: '#f8fafc', padding: '0.85rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginBottom: '0.85rem' }}>
+              <label className="form-label" style={{ fontWeight: 700, color: '#0f172a', marginBottom: '0.4rem' }}>
+                📦 Commodity Classification & Stock Tracking *
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <label style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '0.5rem', padding: '0.6rem 0.75rem', borderRadius: '6px',
+                  border: isMain ? '2px solid #2563eb' : '1px solid #cbd5e1', background: isMain ? '#eff6ff' : '#fff', cursor: 'pointer'
+                }}>
+                  <input type="radio" name="productClass" checked={isMain === true} onChange={() => setIsMain(true)} style={{ marginTop: '0.2rem' }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#1e40af' }}>🌟 Primary Commodity (Main Stock)</div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.15rem' }}>Main trading/processing inventory (Raw Coffee, EP Clean, Tea, Pepper). Included in Store In, Store Out & Primary Physical Stock.</div>
+                  </div>
+                </label>
+
+                <label style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '0.5rem', padding: '0.6rem 0.75rem', borderRadius: '6px',
+                  border: !isMain ? '2px solid #d97706' : '1px solid #cbd5e1', background: !isMain ? '#fffbeb' : '#fff', cursor: 'pointer'
+                }}>
+                  <input type="radio" name="productClass" checked={isMain === false} onChange={() => setIsMain(false)} style={{ marginTop: '0.2rem' }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#b45309' }}>📦 Secondary Product / Byproduct</div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.15rem' }}>Byproducts & secondary items (Coffee Husk, Shells, Waste, Bags). Tracked separately; EXCLUDED from Primary Coffee Stock.</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Row 4: Description Notes */}
+            <div style={{ marginBottom: '0.85rem' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Grade / Spec Notes (Optional)</label>
                 <input
@@ -402,17 +425,6 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                 />
-              </div>
-
-              <div style={{ paddingTop: '1.2rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}>
-                  <input
-                    type="checkbox"
-                    checked={isMain}
-                    onChange={e => setIsMain(e.target.checked)}
-                  />
-                  <span>Show as Quick Chip on Entry</span>
-                </label>
               </div>
             </div>
 

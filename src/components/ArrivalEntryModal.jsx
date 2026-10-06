@@ -28,13 +28,13 @@ export default function ArrivalEntryModal({
 
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [vehicleNo, setVehicleNo] = useState('');
-  const [product, setProduct] = useState('RC Raw');
+  const [product, setProduct] = useState('');
   const [customProduct, setCustomProduct] = useState('');
   const [isCustomProduct, setIsCustomProduct] = useState(false);
 
   const [weight, setWeight] = useState('');
   const [bags, setBags] = useState('');
-  const [outturn, setOutturn] = useState('26'); // default 26 kg per 50kg bag (=52%)
+  const [outturn, setOutturn] = useState('26');
   const [outturnType, setOutturnType] = useState('per_50kg'); // 'per_50kg' or 'percentage'
 
   // Pricing & Accounting State
@@ -46,9 +46,11 @@ export default function ArrivalEntryModal({
   const [cgstRate, setCgstRate] = useState(0);
   const [sgstRate, setSgstRate] = useState(0);
   const [igstRate, setIgstRate] = useState(0);
-  const [tdsRate, setTdsRate] = useState(0);
   const [tcsRate, setTcsRate] = useState(0.1);
+  const [tdsRate, setTdsRate] = useState(0);
   const [remarks, setRemarks] = useState('');
+  const [saveAndAddAnother, setSaveAndAddAnother] = useState(false);
+  const [successBanner, setSuccessBanner] = useState('');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -59,13 +61,8 @@ export default function ArrivalEntryModal({
     setSupplierId(arr.supplierId || '');
     setDate(arr.date || new Date().toISOString().split('T')[0]);
     setVehicleNo(arr.vehicleNo || '');
-    const mainProd = ['RC Raw', 'RC EP', 'AC Raw'];
-    const stdProd = ['RC A', 'RC B', 'RC C', 'RC AA', 'RC PB', 'RC OG', 'RC Bits'];
-    if ([...mainProd, ...stdProd].includes(arr.product)) {
-      setProduct(arr.product); setIsCustomProduct(false);
-    } else {
-      setIsCustomProduct(true); setCustomProduct(arr.product || '');
-    }
+    setProduct(arr.product || '');
+    setIsCustomProduct(false);
     setWeight(String(arr.weight || ''));
     setBags(String(arr.bags || ''));
     setOutturn(String(arr.outturn || '26'));
@@ -78,8 +75,8 @@ export default function ArrivalEntryModal({
     setCgstRate(arr.cgstRate !== undefined ? arr.cgstRate : (isHusk ? 2.5 : 0));
     setSgstRate(arr.sgstRate !== undefined ? arr.sgstRate : (isHusk ? 2.5 : 0));
     setIgstRate(arr.igstRate !== undefined ? arr.igstRate : 0);
-    setTdsRate(arr.tdsRate !== undefined ? arr.tdsRate : 0);
     setTcsRate(arr.tcsRate !== undefined ? arr.tcsRate : 0.1);
+    setTdsRate(arr.tdsRate !== undefined ? arr.tdsRate : 0);
     setRemarks(arr.remarks || '');
     if (arr.commitmentId) setCommitmentId(arr.commitmentId);
   };
@@ -154,22 +151,22 @@ export default function ArrivalEntryModal({
   };
 
   // Calculations
-  const numWeight = parseFloat(weight) || 0;
-  const numBags = parseFloat(bags) || 0;
-  const numOutturn = parseFloat(outturn) || 0;
-  const numRate = parseFloat(rate) || 0;
-
-  const numCgst = billType === 'gst_bill' ? (parseFloat(cgstRate) || 0) : 0;
-  const numSgst = billType === 'gst_bill' ? (parseFloat(sgstRate) || 0) : 0;
-  const numIgst = billType === 'gst_bill' ? (parseFloat(igstRate) || 0) : 0;
-  const numTds = parseFloat(tdsRate) || 0;
-  const numTcs = parseFloat(tcsRate) || 0;
-
   const currentProdName = isCustomProduct ? customProduct : product;
   const selectedProductObj = products.find(p => p.name === currentProdName || p.code === currentProdName);
   const isDirectBasis = selectedProductObj 
     ? selectedProductObj.calculationBasis === 'direct' 
     : (!currentProdName.toLowerCase().includes('raw') && !currentProdName.toLowerCase().includes('cherry') && !currentProdName.toLowerCase().includes('parchment'));
+
+  const numWeight = parseFloat(weight) || 0;
+  const numBags = parseFloat(bags) || 0;
+  const numOutturn = isDirectBasis ? 50 : (parseFloat(outturn) || 0);
+  const numRate = parseFloat(rate) || 0;
+
+  const numCgst = billType === 'gst_bill' ? (parseFloat(cgstRate) || 0) : 0;
+  const numSgst = billType === 'gst_bill' ? (parseFloat(sgstRate) || 0) : 0;
+  const numIgst = billType === 'gst_bill' ? (parseFloat(igstRate) || 0) : 0;
+  const numTcs = parseFloat(tcsRate) || 0;
+  const numTds = parseFloat(tdsRate) || 0;
 
   // End Product calculation
   let endProductWeight = 0;
@@ -200,11 +197,12 @@ export default function ArrivalEntryModal({
   let calcCgst = Math.round((taxableAmount * (numCgst / 100)) * 100) / 100;
   let calcSgst = Math.round((taxableAmount * (numSgst / 100)) * 100) / 100;
   let calcIgst = Math.round((taxableAmount * (numIgst / 100)) * 100) / 100;
-  let billAmount = Math.round((taxableAmount + calcCgst + calcSgst + calcIgst) * 100) / 100;
+  let calcGstTotal = calcCgst + calcSgst + calcIgst;
+  let billAmount = Math.round((taxableAmount + calcGstTotal) * 100) / 100;
 
-  let tdsAmount = Math.round((taxableAmount * (numTds / 100)) * 100) / 100;
   let tcsAmount = Math.round((taxableAmount * (numTcs / 100)) * 100) / 100;
-  let netAmount = Math.round((billAmount - tdsAmount + tcsAmount) * 100) / 100;
+  let tdsAmount = Math.round((taxableAmount * (numTds / 100)) * 100) / 100;
+  let netAmount = Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
 
   const handleCommitmentSelect = (cId) => {
     setCommitmentId(cId);
@@ -260,10 +258,12 @@ export default function ArrivalEntryModal({
       supplierName: selectedSupplier ? selectedSupplier.name : 'Unknown',
       vehicleNo,
       product: finalProduct,
+      isMain: selectedProductObj ? (selectedProductObj.isMain === true) : !currentProdName.toLowerCase().includes('husk'),
+      isSecondary: selectedProductObj ? (selectedProductObj.isSecondary === true) : currentProdName.toLowerCase().includes('husk'),
       calculationBasis: isDirectBasis ? 'direct' : 'end_product',
       weight: numWeight,
       bags: numBags,
-      outturn: numOutturn,
+      outturn: isDirectBasis ? 50 : numOutturn,
       outturnType,
       endProductWeight,
       rateType,
@@ -273,8 +273,8 @@ export default function ArrivalEntryModal({
       cgstRate: numCgst,
       sgstRate: numSgst,
       igstRate: numIgst,
-      tdsRate: numTds,
       tcsRate: numTcs,
+      tdsRate: numTds,
       commitmentId: rateType === 'commitment' ? commitmentId : null,
       remarks
     };
@@ -283,12 +283,24 @@ export default function ArrivalEntryModal({
     try {
       if (isEditMode && arrivalToEdit) {
         await dbAction('arrivals:update', { id: arrivalToEdit.id, data: payload });
+        if (onSaved) onSaved();
+        onClose();
       } else {
         await dbAction('arrivals:add', payload);
+        if (onSaved) onSaved();
+        if (saveAndAddAnother) {
+          setWeight('');
+          setBags('');
+          setRate('');
+          setVehicleNo('');
+          setRemarks('');
+          setSuccessBanner('✓ Arrival recorded successfully! Ready for next entry.');
+          setTimeout(() => setSuccessBanner(''), 4000);
+          if (firstInputRef.current) firstInputRef.current.focus();
+        } else {
+          onClose();
+        }
       }
-
-      if (onSaved) onSaved();
-      onClose();
     } catch (err) {
       setErrorMsg(err.message || 'Failed to save arrival');
     } finally {
@@ -296,10 +308,19 @@ export default function ArrivalEntryModal({
     }
   };
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!isOpen) return;
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleSubmit();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, supplierId, numWeight, numRate, rateType, product, date, vehicleNo, saveAndAddAnother]);
 
-  const mainProducts = ['RC Raw', 'RC EP', 'AC Raw'];
-  const standardProducts = ['RC A', 'RC B', 'RC C', 'RC AA', 'RC PB', 'RC OG', 'RC Bits'];
+  if (!isOpen) return null;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -315,6 +336,12 @@ export default function ArrivalEntryModal({
         </div>
 
         <form onSubmit={handleSubmit} className="modal-body">
+          {successBanner && (
+            <div style={{ background: '#dcfce7', border: '1px solid #86efac', color: '#15803d', padding: '0.65rem', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', fontWeight: 600 }}>
+              <Check size={16} />
+              <span>{successBanner}</span>
+            </div>
+          )}
           {errorMsg && (
             <div style={{ background: '#fef2f2', border: '1px solid #f87171', color: '#b91c1c', padding: '0.65rem', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
               <AlertCircle size={16} />
@@ -427,6 +454,8 @@ export default function ArrivalEntryModal({
                   if (pObj.calculationBasis === 'end_product' && pObj.defaultOutturn) {
                     setOutturn(String(pObj.defaultOutturn));
                     if (pObj.defaultOutturnType) setOutturnType(pObj.defaultOutturnType);
+                  } else if (pObj.calculationBasis === 'direct') {
+                    setOutturn('50');
                   }
                 }
               }}
@@ -462,33 +491,38 @@ export default function ArrivalEntryModal({
               />
             </div>
 
-            <div className="form-group">
+            <div className="form-group" style={{ opacity: isDirectBasis ? 0.6 : 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <label className="form-label">Outturn (OT) *</label>
-                <div style={{ display: 'flex', gap: '0.35rem', fontSize: '0.72rem' }}>
-                  <span 
-                    style={{ cursor: 'pointer', fontWeight: outturnType === 'per_50kg' ? 700 : 400, color: outturnType === 'per_50kg' ? '#2563eb' : '#64748b' }}
-                    onClick={() => setOutturnType('per_50kg')}
-                  >
-                    Kg / 50kg bag
-                  </span>
-                  <span>|</span>
-                  <span 
-                    style={{ cursor: 'pointer', fontWeight: outturnType === 'percentage' ? 700 : 400, color: outturnType === 'percentage' ? '#2563eb' : '#64748b' }}
-                    onClick={() => setOutturnType('percentage')}
-                  >
-                    % Outturn
-                  </span>
-                </div>
+                <label className="form-label">
+                  Outturn (OT) {isDirectBasis ? '(Direct 50kg)' : '*'}
+                </label>
+                {!isDirectBasis && (
+                  <div style={{ display: 'flex', gap: '0.35rem', fontSize: '0.72rem' }}>
+                    <span 
+                      style={{ cursor: 'pointer', fontWeight: outturnType === 'per_50kg' ? 700 : 400, color: outturnType === 'per_50kg' ? '#2563eb' : '#64748b' }}
+                      onClick={() => setOutturnType('per_50kg')}
+                    >
+                      Kg / 50kg bag
+                    </span>
+                    <span>|</span>
+                    <span 
+                      style={{ cursor: 'pointer', fontWeight: outturnType === 'percentage' ? 700 : 400, color: outturnType === 'percentage' ? '#2563eb' : '#64748b' }}
+                      onClick={() => setOutturnType('percentage')}
+                    >
+                      % Outturn
+                    </span>
+                  </div>
+                )}
               </div>
 
               <input
                 type="number"
                 step="any"
                 className="form-control num-input"
-                placeholder={outturnType === 'per_50kg' ? 'e.g. 26' : 'e.g. 52 (%)'}
-                value={outturn}
+                placeholder={isDirectBasis ? '50 (Direct 100%)' : (outturnType === 'per_50kg' ? 'e.g. 26' : 'e.g. 52 (%)')}
+                value={isDirectBasis ? '50' : outturn}
                 onChange={e => setOutturn(e.target.value)}
+                disabled={isDirectBasis}
               />
             </div>
           </div>
@@ -579,21 +613,34 @@ export default function ArrivalEntryModal({
                   </div>
                 )}
 
-                <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
-                  <div className="form-group">
-                    <label className="form-label">Purchase Rate (₹/kg EP) *</label>
-                    <input
-                      type="number"
-                      step="any"
-                      className="form-control num-input"
-                      placeholder="Rate per kg EP"
-                      value={rate}
-                      onChange={e => setRate(e.target.value)}
-                      required={rateType !== 'storage'}
-                    />
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.3fr) minmax(0, 1fr)', gap: '0.75rem' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Purchase Rate (₹) *</label>
+                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                      <input
+                        type="number"
+                        step="any"
+                        className="form-control num-input"
+                        placeholder="Purchase Rate"
+                        value={rate}
+                        onChange={e => setRate(e.target.value)}
+                        required={rateType !== 'storage'}
+                        style={{ flex: 1, minWidth: 0 }}
+                      />
+                      <select
+                        className="form-control"
+                        style={{ width: '100px', flexShrink: 0, fontSize: '0.75rem', padding: '0.3rem' }}
+                        value={rateUnit}
+                        onChange={e => setRateUnit(e.target.value)}
+                      >
+                        <option value="per_kg_ep">₹ / kg EP</option>
+                        <option value="per_kg_raw">₹ / kg Raw</option>
+                        <option value="per_bag">₹ / Bag</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="form-group">
+                  <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Bill Type</label>
                     <select
                       className="form-control"
@@ -604,51 +651,78 @@ export default function ArrivalEntryModal({
                       <option value="cash_bill">Cash Purchase / Regular (No GST)</option>
                     </select>
                   </div>
-
-                  <div className="form-group">
-                    <label className="form-label">TCS % (u/s 206C)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="form-control num-input"
-                      placeholder="0.10"
-                      value={tcsRate}
-                      onChange={e => setTcsRate(e.target.value)}
-                    />
-                  </div>
                 </div>
 
-                {/* Tax Breakdown Controls */}
-                {billType === 'gst_bill' && (
-                  <div className="form-grid-3" style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px dashed #cbd5e1' }}>
-                    <div className="form-group">
-                      <label className="form-label" style={{ fontSize: '0.8rem' }}>CGST %</label>
-                      <input type="number" step="0.1" className="form-control form-control-sm" value={cgstRate} onChange={e => setCgstRate(e.target.value)} />
+                {/* Tax Breakdown Grid (CGST, SGST & TCS) */}
+                <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px dashed #cbd5e1' }}>
+                  {billType === 'gst_bill' ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>CGST %</label>
+                        <input type="number" step="0.1" className="form-control form-control-sm" value={cgstRate} onChange={e => setCgstRate(e.target.value)} />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>SGST %</label>
+                        <input type="number" step="0.1" className="form-control form-control-sm" value={sgstRate} onChange={e => setSgstRate(e.target.value)} />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.10"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
+                        />
+                      </div>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label" style={{ fontSize: '0.8rem' }}>SGST %</label>
-                      <input type="number" step="0.1" className="form-control form-control-sm" value={sgstRate} onChange={e => setSgstRate(e.target.value)} />
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '0.75rem' }}>
+                      <div className="form-group" style={{ marginBottom: 0, maxWidth: '200px' }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.10"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
+                        />
+                      </div>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
-                      <input type="number" step="0.01" className="form-control form-control-sm" value={tdsRate} onChange={e => setTdsRate(e.target.value)} />
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* Calculation summary */}
-                <div style={{ marginTop: '0.85rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0f172a', color: '#fff', padding: '0.75rem 1rem', borderRadius: '6px' }}>
+                <div style={{
+                  marginTop: '0.85rem',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.6rem 1rem',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  background: '#0f172a',
+                  color: '#fff',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
+                }}>
                   <div>
-                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Taxable: </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)' }}>₹{taxableAmount.toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>Taxable Amount:</span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem' }}>₹{taxableAmount.toLocaleString()}</strong>
                   </div>
                   <div>
-                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>GST: </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', color: '#38bdf8' }}>+₹{(calcCgst + calcSgst + calcIgst).toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>GST: </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: '#38bdf8' }}>+₹{(calcCgst + calcSgst + calcIgst).toLocaleString()}</strong>
                   </div>
                   <div>
-                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Net Payable: </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', color: '#4ade80' }}>₹{netAmount.toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (+): </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#fbbf24' }}>+₹{tcsAmount.toLocaleString()}</strong>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>Net Purchase Bill:</span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '1.15rem', color: '#4ade80' }}>₹{netAmount.toLocaleString()}</strong>
                   </div>
                 </div>
               </div>
@@ -666,14 +740,29 @@ export default function ArrivalEntryModal({
             />
           </div>
 
-          <div className="modal-footer" style={{ padding: '0.75rem 0 0 0', background: 'transparent' }}>
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={isSubmitting}>
-              Cancel (Esc)
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-              {isEditMode ? <Edit2 size={16} /> : <Check size={16} />}
-              {isSubmitting ? 'Saving...' : isEditMode ? ' Update Arrival' : ' Save Arrival & Bill'}
-            </button>
+          <div className="modal-footer" style={{ padding: '0.75rem 0 0 0', background: 'transparent', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              {!isEditMode && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer', userSelect: 'none', color: '#64748b' }}>
+                  <input
+                    type="checkbox"
+                    checked={saveAndAddAnother}
+                    onChange={e => setSaveAndAddAnother(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#2563eb' }}
+                  />
+                  <span>⚡ <strong>Save & Add Next</strong> (Keep party & product)</span>
+                </label>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={isSubmitting}>
+                Cancel (Esc)
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting} title="Ctrl+Enter or Cmd+Enter to submit">
+                {isEditMode ? <Edit2 size={16} /> : <Check size={16} />}
+                {isSubmitting ? 'Saving...' : isEditMode ? ' Update Arrival' : ' Save Arrival (Ctrl+Enter)'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

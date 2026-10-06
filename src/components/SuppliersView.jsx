@@ -9,7 +9,10 @@ import {
   Phone, 
   MapPin, 
   Layers,
+  ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   RefreshCw,
   Edit2,
   Trash2,
@@ -27,6 +30,14 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
   const [sortAsc, setSortAsc] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, partyTypeFilter]);
 
   // Add / Edit Supplier Modal
   const [showModal, setShowModal] = useState(false);
@@ -177,7 +188,63 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
 
   const totalPayableAll = filteredSuppliers.filter(s => s.netPayable > 0).reduce((sum, s) => sum + s.netPayable, 0);
   const totalReceivableAll = filteredSuppliers.filter(s => s.netPayable < 0).reduce((sum, s) => sum + Math.abs(s.netPayable), 0);
-  const totalStorageBagsAll = filteredSuppliers.reduce((sum, s) => sum + s.storageBags, 0);
+  const totalArrivalEPMainAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalArrivalEPMain !== undefined ? s.totalArrivalEPMain : Math.max(0, (s.totalEndProduct || 0) - (s.totalArrivalEPSecondary || 0))), 0);
+  const totalArrivalEPSecondaryAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalArrivalEPSecondary || 0), 0);
+  const totalRawWeightMainAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalRawWeightMain !== undefined ? s.totalRawWeightMain : (s.totalRawWeight || 0)), 0);
+  const totalRawWeightSecondaryAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalRawWeightSecondary || 0), 0);
+  const totalBagsMainAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalBagsMain !== undefined ? s.totalBagsMain : (s.totalBags || 0)), 0);
+  const totalBagsSecondaryAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalBagsSecondary || 0), 0);
+  const totalDispatchEPMainAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalDispatchEP || 0), 0);
+  const totalDispatchEPSecondaryAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalDispatchEPSecondary || 0), 0);
+  const totalStoreInEPMainAll = filteredSuppliers.reduce((sum, s) => sum + (s.storeInEPMain !== undefined ? s.storeInEPMain : (s.storeInEP || 0)), 0);
+  const totalStoreInEPSecondaryAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalStoreInEPSecondary || 0), 0);
+  const totalStoreOutEPMainAll = filteredSuppliers.reduce((sum, s) => sum + (s.storeOutEPMain !== undefined ? s.storeOutEPMain : (s.storeOutEP || 0)), 0);
+  const totalStoreOutEPSecondaryAll = filteredSuppliers.reduce((sum, s) => sum + (s.totalStoreOutEPSecondary || 0), 0);
+
+  // Pagination
+  const totalPages = Math.ceil(filteredSuppliers.length / pageSize) || 1;
+  const paginatedSuppliers = filteredSuppliers.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const renderPaginationControls = (totalItems) => {
+    const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(totalItems, currentPage * pageSize);
+
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 1.25rem', borderTop: '1px solid #e2e8f0', background: '#f8fafc', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span>Showing <strong>{startItem}–{endItem}</strong> of <strong>{totalItems}</strong> accounts</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <span>Per page:</span>
+            <select
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+              style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.15rem 0.35rem', fontSize: '0.8rem', outline: 'none' }}
+            >
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+          <button className="btn btn-secondary btn-sm" style={{ padding: '0.2rem 0.45rem' }} disabled={currentPage === 1} onClick={() => setCurrentPage(1)} title="First Page">
+            <ChevronsLeft size={14} />
+          </button>
+          <button className="btn btn-secondary btn-sm" style={{ padding: '0.2rem 0.45rem' }} disabled={currentPage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} title="Previous Page">
+            <ChevronLeft size={14} /> Prev
+          </button>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, padding: '0 0.5rem', color: '#0f172a' }}>Page {currentPage} of {totalPages}</span>
+          <button className="btn btn-secondary btn-sm" style={{ padding: '0.2rem 0.45rem' }} disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} title="Next Page">
+            Next <ChevronRight size={14} />
+          </button>
+          <button className="btn btn-secondary btn-sm" style={{ padding: '0.2rem 0.45rem' }} disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)} title="Last Page">
+            <ChevronsRight size={14} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -241,24 +308,48 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
         </div>
       </div>
 
-      {/* Summary Cards */}
+      {/* Summary KPI Cards — Primary vs Secondary Separation */}
       <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        <div className="metric-box danger">
-          <span className="metric-label">Total Payable to Suppliers (We Owe)</span>
-          <span className="metric-value">₹{totalPayableAll.toLocaleString('en-IN')}</span>
-          <span className="metric-sub">Credit Balances</span>
+        {/* Card 1: Financial Balance */}
+        <div className="metric-box danger" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <span className="metric-label">Financial Balance Overview</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: 600 }}>We Owe (Suppliers)</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#dc2626' }}>₹{totalPayableAll.toLocaleString('en-IN')}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 600 }}>Owes Us (Buyers)</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#059669' }}>₹{totalReceivableAll.toLocaleString('en-IN')}</div>
+            </div>
+          </div>
+          <span className="metric-sub">Net Ledger Balances Across All Accounts</span>
         </div>
 
-        <div className="metric-box success">
-          <span className="metric-label">Total Receivable from Buyers (They Owe Us)</span>
-          <span className="metric-value">₹{totalReceivableAll.toLocaleString('en-IN')}</span>
-          <span className="metric-sub">Debit Balances</span>
+        {/* Card 2: 🌿 Primary / Main Products */}
+        <div className="metric-box success" style={{ background: '#f0fdf4', borderColor: '#86efac', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span className="metric-label" style={{ color: '#166534', fontWeight: 800 }}>🌿 Primary / Main Products (All Parties)</span>
+            <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>Primary</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', fontSize: '0.78rem', color: '#166534' }}>
+            <div>Inward Raw: <strong>{totalRawWeightMainAll.toLocaleString()} kg</strong> ({totalBagsMainAll} Bags)</div>
+            <div>Inward EP: <strong>{totalArrivalEPMainAll.toLocaleString()} kg</strong> | Disp EP: <strong>{totalDispatchEPMainAll.toLocaleString()} kg</strong></div>
+            <div>Storage (In / Out): <strong>{totalStoreInEPMainAll.toLocaleString()} kg</strong> / <strong>{totalStoreOutEPMainAll.toLocaleString()} kg</strong></div>
+          </div>
         </div>
 
-        <div className="metric-box purple">
-          <span className="metric-label">Total Storage Coffee In-Warehouse</span>
-          <span className="metric-value">{totalStorageBagsAll.toLocaleString()} Bags</span>
-          <span className="metric-sub">Across all party accounts</span>
+        {/* Card 3: 📦 Secondary Products */}
+        <div className="metric-box" style={{ background: '#fffbeb', borderColor: '#fcd34d', borderLeftColor: '#d97706', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span className="metric-label" style={{ color: '#92400e', fontWeight: 800 }}>📦 Secondary Products (All Parties)</span>
+            <span className="badge badge-amber" style={{ fontSize: '0.65rem' }}>Secondary</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', fontSize: '0.78rem', color: '#92400e' }}>
+            <div>Inward Raw: <strong>{totalRawWeightSecondaryAll.toLocaleString()} kg</strong> ({totalBagsSecondaryAll} Bags)</div>
+            <div>Inward EP: <strong>{totalArrivalEPSecondaryAll.toLocaleString()} kg</strong> | Disp EP: <strong>{totalDispatchEPSecondaryAll.toLocaleString()} kg</strong></div>
+            <div>Storage (In / Out): <strong>{totalStoreInEPSecondaryAll.toLocaleString()} kg</strong> / <strong>{totalStoreOutEPSecondaryAll.toLocaleString()} kg</strong></div>
+          </div>
         </div>
       </div>
 
@@ -279,7 +370,7 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
                   Sales (₹) <ArrowUpDown size={12} style={{ display: 'inline' }} />
                 </th>
                 <th className="num" style={{ background: '#faf5ff', color: '#7c3aed' }}>
-                  Storage Coffee
+                  EP Stock (Arrival, Dispatch, Store In/Out)
                 </th>
                 <th className="num" style={{ color: '#059669' }}>Paid (₹)</th>
                 <th className="num" style={{ color: '#2563eb' }}>Received (₹)</th>
@@ -299,7 +390,7 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
                   </td>
                 </tr>
               ) : (
-                filteredSuppliers.map(s => (
+                paginatedSuppliers.map(s => (
                   <tr 
                     key={s.id} 
                     style={{ cursor: 'pointer' }}
@@ -308,9 +399,9 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
                     <td style={{ fontWeight: 600, color: '#0f172a' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span>{s.name}</span>
-                        {s.storageBags > 0 && (
-                          <span className="badge badge-coffee" title="Storage Coffee Available">
-                            📦 {s.storageBags}b
+                        {(s.storeInEP > 0 || s.storeOutEP > 0 || s.totalEndProduct > 0) && (
+                          <span className="badge badge-coffee" title={`Arr EP: ${s.totalEndProduct || 0} kg | Store-In: ${s.storeInEP || 0} kg`}>
+                            ☕ EP Account
                           </span>
                         )}
                       </div>
@@ -322,16 +413,26 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
                     </td>
                     <td className="num">₹{(s.totalPurchasesBilled || 0).toLocaleString('en-IN')}</td>
                     <td className="num" style={{ color: '#0284c7' }}>₹{(s.totalSalesBilled || 0).toLocaleString('en-IN')}</td>
-                    <td className="num" style={{ background: s.storageBags > 0 ? '#faf5ff' : 'transparent' }}>
-                      {s.storageBags > 0 ? (
-                        <div style={{ color: '#7c3aed', fontWeight: 600 }}>
-                          {s.storageBags} bags ({s.storageEndProduct.toLocaleString()} kg)
-                          <div style={{ fontSize: '0.72rem', color: '#9333ea' }}>Avg OT: {s.storageAvgOutturn}</div>
+                    <td className="num" style={{ background: (s.storeInEP > 0 || s.storeOutEP > 0 || s.totalEndProduct > 0 || s.totalDispatchEP > 0 || s.totalHuskWeight > 0) ? '#faf5ff' : 'transparent' }}>
+                      {(s.storeInEP > 0 || s.storeOutEP > 0 || s.totalEndProduct > 0 || s.totalDispatchEP > 0 || s.totalHuskWeight > 0 || s.totalArrivalEPSecondary > 0) ? (
+                        <div style={{ color: '#7c3aed', fontWeight: 600, fontSize: '0.78rem' }}>
+                          <div style={{ fontSize: '0.73rem', color: '#166534', fontWeight: 700 }}>
+                            🌿 Arr: {(s.totalArrivalEPMain || (s.totalEndProduct || 0) - (s.totalArrivalEPSecondary || 0)).toLocaleString()} kg | Disp: {(s.totalDispatchEP || 0).toLocaleString()} kg
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: '#6b21a8', fontWeight: 500 }}>
+                            In: {(s.storeInEPMain || s.storeInEP || 0).toLocaleString()} kg | Out: {(s.storeOutEPMain || s.storeOutEP || 0).toLocaleString()} kg
+                          </div>
+                          {(s.totalArrivalEPSecondary > 0 || s.totalDispatchEPSecondary > 0 || s.totalStoreInEPSecondary > 0) && (
+                            <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: 600 }}>
+                              📦 Arr: {(s.totalArrivalEPSecondary || 0).toLocaleString()} kg | Disp: {(s.totalDispatchEPSecondary || 0).toLocaleString()} kg
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <span style={{ color: '#94a3b8' }}>-</span>
                       )}
                     </td>
+
                     <td className="num" style={{ color: '#059669', fontWeight: 500 }}>
                       ₹{s.totalPaid.toLocaleString('en-IN')}
                     </td>
@@ -384,6 +485,9 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {renderPaginationControls(filteredSuppliers.length)}
       </div>
 
       {/* New / Edit Supplier Modal */}
