@@ -286,10 +286,18 @@ export default function DispatchEntryModal({
         rate: rateType === 'storage_out' ? 0 : numRate,
         billType,
         cgstRate: numCgst,
+        cgstAmount: calcCgst,
         sgstRate: numSgst,
+        sgstAmount: calcSgst,
         igstRate: numIgst,
+        igstAmount: calcIgst,
+        taxableAmount: calcTaxable,
+        billAmount: calcBillGross,
         tdsRate: numTds,
+        tdsAmount: calcTdsAmount,
         tcsRate: numTcs,
+        tcsAmount: calcTcsAmount,
+        netAmount: calcNetAmount,
         commitmentId: rateType === 'commitment' ? commitmentId : null,
         remarks
       };
@@ -677,6 +685,18 @@ export default function DispatchEntryModal({
                       </div>
 
                       <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.00"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
                         <input
                           type="number"
@@ -689,8 +709,19 @@ export default function DispatchEntryModal({
                       </div>
                     </div>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '0.75rem' }}>
-                      <div className="form-group" style={{ marginBottom: 0, maxWidth: '200px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxWidth: '360px' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.00"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
                         <input
                           type="number"
@@ -726,6 +757,10 @@ export default function DispatchEntryModal({
                   <div>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>GST: </span>
                     <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: '#38bdf8' }}>+₹{calcGstTotal.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (+): </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#fbbf24' }}>+₹{calcTcsAmount.toLocaleString()}</strong>
                   </div>
                   <div>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TDS (-): </span>

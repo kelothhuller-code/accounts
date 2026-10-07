@@ -271,10 +271,18 @@ export default function ArrivalEntryModal({
       rate: rateType === 'storage' ? 0 : numRate,
       billType,
       cgstRate: numCgst,
+      cgstAmount: calcCgst,
       sgstRate: numSgst,
+      sgstAmount: calcSgst,
       igstRate: numIgst,
+      igstAmount: calcIgst,
+      taxableAmount,
+      billAmount,
       tcsRate: numTcs,
+      tcsAmount,
       tdsRate: numTds,
+      tdsAmount,
+      netAmount,
       commitmentId: rateType === 'commitment' ? commitmentId : null,
       remarks
     };
@@ -653,10 +661,10 @@ export default function ArrivalEntryModal({
                   </div>
                 </div>
 
-                {/* Tax Breakdown Grid (CGST, SGST & TCS) */}
+                {/* Tax Breakdown Grid (CGST, SGST, TCS & TDS) */}
                 <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px dashed #cbd5e1' }}>
                   {billType === 'gst_bill' ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.75rem' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>CGST %</label>
                         <input type="number" step="0.1" className="form-control form-control-sm" value={cgstRate} onChange={e => setCgstRate(e.target.value)} />
@@ -676,10 +684,21 @@ export default function ArrivalEntryModal({
                           onChange={e => setTcsRate(e.target.value)}
                         />
                       </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.00"
+                          value={tdsRate}
+                          onChange={e => setTdsRate(e.target.value)}
+                        />
+                      </div>
                     </div>
                   ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '0.75rem' }}>
-                      <div className="form-group" style={{ marginBottom: 0, maxWidth: '200px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxWidth: '360px' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
                         <input
                           type="number"
@@ -688,6 +707,17 @@ export default function ArrivalEntryModal({
                           placeholder="0.10"
                           value={tcsRate}
                           onChange={e => setTcsRate(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.00"
+                          value={tdsRate}
+                          onChange={e => setTdsRate(e.target.value)}
                         />
                       </div>
                     </div>
@@ -719,6 +749,10 @@ export default function ArrivalEntryModal({
                   <div>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (+): </span>
                     <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#fbbf24' }}>+₹{tcsAmount.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TDS (-): </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#f87171' }}>-₹{tdsAmount.toLocaleString()}</strong>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>Net Purchase Bill:</span>

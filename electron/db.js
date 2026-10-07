@@ -194,6 +194,59 @@ function getCanonicalName(rawName) {
   return result;
 }
 
+// Calculate effective net bill for an arrival (purchase bill) factoring in TCS and TDS
+function getEffectiveArrivalNetAmount(arr) {
+  if (!arr) return 0;
+  const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * Number(arr.rate)) || 0;
+  const cgst = Number(arr.cgstAmount) || 0;
+  const sgst = Number(arr.sgstAmount) || 0;
+  const igst = Number(arr.igstAmount) || 0;
+  const billBase = Number(arr.billAmount) || (taxable + cgst + sgst + igst);
+  const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+  const tds = Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
+
+  let net = Number(arr.netAmount);
+  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
+    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  }
+  return net;
+}
+
+// Calculate effective net invoice for a dispatch (sale invoice) factoring in TCS and TDS
+function getEffectiveDispatchNetAmount(disp) {
+  if (!disp) return 0;
+  const taxable = Number(disp.taxableAmount) || (Number(disp.weight) * Number(disp.rate)) || 0;
+  const cgst = Number(disp.cgstAmount) || 0;
+  const sgst = Number(disp.sgstAmount) || 0;
+  const igst = Number(disp.igstAmount) || 0;
+  const billBase = Number(disp.billAmount) || (taxable + cgst + sgst + igst);
+  const tcs = Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
+  const tds = Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
+
+  let net = Number(disp.netAmount);
+  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
+    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  }
+  return net;
+}
+
+// Calculate effective net bill for a settlement factoring in TCS and TDS
+function getEffectiveSettlementNetAmount(set) {
+  if (!set) return 0;
+  const gross = Number(set.settlementGrossAmount) || 0;
+  const cgst = Number(set.cgstAmount) || 0;
+  const sgst = Number(set.sgstAmount) || 0;
+  const igst = Number(set.igstAmount) || 0;
+  const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+  const tds = Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
+
+  let net = Number(set.settlementNetAmount);
+  if (!net || isNaN(net) || (Math.abs(net - gross) < 0.01 && (tcs > 0 || tds > 0 || cgst > 0 || sgst > 0 || igst > 0))) {
+    net = Math.round((gross + cgst + sgst + igst + tcs - tds) * 100) / 100;
+  }
+  return net;
+}
+
 // Global check whether a product is a secondary/by‑product (O(1) cached)
 function isSecondaryProduct(pName) {
   if (!pName) return false;
@@ -1101,13 +1154,16 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     }
 
     if (arr.status === 'billed' || arr.status === 'cash_bill') {
-      const bill = Number(arr.netAmount) || Number(arr.billAmount) || 0;
+      const bill = getEffectiveArrivalNetAmount(arr);
       totalPurchasesBilled += bill;
       totalCgst += (Number(arr.cgstAmount) || 0);
       totalSgst += (Number(arr.sgstAmount) || 0);
       totalIgst += (Number(arr.igstAmount) || 0);
-      totalTdsDeducted += (Number(arr.tdsAmount) || 0);
-      totalTcsDeducted += (Number(arr.tcsAmount) || 0);
+      const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * Number(arr.rate)) || 0;
+      const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+      const tds = Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
+      totalTdsDeducted += tds;
+      totalTcsDeducted += tcs;
     }
   });
 
@@ -1133,26 +1189,32 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
         storeOutEP += remEP;
       }
     } else {
-      const bill = Number(disp.netAmount) || Number(disp.billAmount) || 0;
+      const bill = getEffectiveDispatchNetAmount(disp);
       totalSalesBilled += bill;
       totalCgst += (Number(disp.cgstAmount) || 0);
       totalSgst += (Number(disp.sgstAmount) || 0);
       totalIgst += (Number(disp.igstAmount) || 0);
-      totalTdsDeducted += (Number(disp.tdsAmount) || 0);
-      totalTcsDeducted += (Number(disp.tcsAmount) || 0);
+      const taxable = Number(disp.taxableAmount) || (Number(disp.weight) * Number(disp.rate)) || 0;
+      const tcs = Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
+      const tds = Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
+      totalTdsDeducted += tds;
+      totalTcsDeducted += tcs;
     }
   });
 
   // 3. Process Storage Settlements
   settlements.forEach(set => {
-    const bill = Number(set.settlementNetAmount) || Number(set.settlementGrossAmount) || 0;
+    const bill = getEffectiveSettlementNetAmount(set);
     if (set.settlementCategory === 'sales_storage') {
       totalSalesBilled += bill;
     } else {
       totalPurchasesBilled += bill;
     }
-    totalTcsDeducted += (Number(set.tcsAmount) || 0);
-    totalTdsDeducted += (Number(set.tdsAmount) || 0);
+    const gross = Number(set.settlementGrossAmount) || 0;
+    const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+    const tds = Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
+    totalTcsDeducted += tcs;
+    totalTdsDeducted += tds;
   });
 
   // Net Stored Stock calculation before EP Transfers
@@ -2057,11 +2119,11 @@ const dbController = {
     let sgstAmount = 0;
     let igstAmount = 0;
 
-    let tdsRate = Number(data.tdsRate) || 0;
-    let tdsAmount = 0;
+    let tdsRate = data.tdsRate !== undefined && data.tdsRate !== '' ? Number(data.tdsRate) : 0;
+    let tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : 0;
 
-    let tcsRate = Number(data.tcsRate) || (dbState.settings.defaultTcsRate || 0.1);
-    let tcsAmount = 0;
+    let tcsRate = data.tcsRate !== undefined && data.tcsRate !== '' ? Number(data.tcsRate) : (dbState.settings.defaultTcsRate || 0.1);
+    let tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : 0;
 
     let billAmount = 0;
     let netAmount = 0;
@@ -2113,10 +2175,10 @@ const dbController = {
       }
       billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
 
-      tdsAmount = Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
+      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
+      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = Math.round((billAmount - tdsAmount + tcsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
       status = billType === 'cash_bill' ? 'cash_bill' : 'billed';
     }
 
@@ -2215,8 +2277,8 @@ const dbController = {
     let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (arr.sgstRate || 0)) : 0;
     let igstRate = billType === 'gst_bill' ? (data.igstRate !== undefined ? Number(data.igstRate) : (arr.igstRate || 0)) : 0;
 
-    let tdsRate = data.tdsRate !== undefined ? Number(data.tdsRate) : (arr.tdsRate || 0);
-    let tcsRate = data.tcsRate !== undefined ? Number(data.tcsRate) : (arr.tcsRate || 0.1);
+    let tdsRate = data.tdsRate !== undefined && data.tdsRate !== '' ? Number(data.tdsRate) : (arr.tdsRate || 0);
+    let tcsRate = data.tcsRate !== undefined && data.tcsRate !== '' ? Number(data.tcsRate) : (arr.tcsRate !== undefined ? arr.tcsRate : 0.1);
 
     let taxableAmount = 0;
     let cgstAmount = 0;
@@ -2246,10 +2308,10 @@ const dbController = {
       }
       billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
 
-      tdsAmount = Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
+      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
+      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = Math.round((billAmount - tdsAmount + tcsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
     }
 
     dbState.arrivals[index] = {
@@ -2429,10 +2491,10 @@ const dbController = {
     let cgstAmount = 0;
     let sgstAmount = 0;
     let igstAmount = 0;
-    let tdsRate = Number(data.tdsRate) || 0;
-    let tdsAmount = 0;
-    let tcsRate = Number(data.tcsRate) || (dbState.settings.defaultTcsRate || 0.1);
-    let tcsAmount = 0;
+    let tdsRate = data.tdsRate !== undefined && data.tdsRate !== '' ? Number(data.tdsRate) : 0;
+    let tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : 0;
+    let tcsRate = data.tcsRate !== undefined && data.tcsRate !== '' ? Number(data.tcsRate) : (dbState.settings.defaultTcsRate || 0);
+    let tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : 0;
     let billAmount = 0;
     let netAmount = 0;
     let status = 'billed';
@@ -2459,10 +2521,10 @@ const dbController = {
       }
       billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
 
-      tdsAmount = Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
+      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
+      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = Math.round((billAmount - tdsAmount + tcsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
       status = billType === 'cash_bill' ? 'cash_bill' : 'billed';
     }
 
@@ -2542,8 +2604,8 @@ const dbController = {
     let cgstRate = billType === 'gst_bill' ? (data.cgstRate !== undefined ? Number(data.cgstRate) : (disp.cgstRate || (dispatchType === 'husk' ? 2.5 : 0))) : 0;
     let sgstRate = billType === 'gst_bill' ? (data.sgstRate !== undefined ? Number(data.sgstRate) : (disp.sgstRate || (dispatchType === 'husk' ? 2.5 : 0))) : 0;
     let igstRate = billType === 'gst_bill' ? (data.igstRate !== undefined ? Number(data.igstRate) : (disp.igstRate || 0)) : 0;
-    let tdsRate = data.tdsRate !== undefined ? Number(data.tdsRate) : (disp.tdsRate || 0);
-    let tcsRate = data.tcsRate !== undefined ? Number(data.tcsRate) : (disp.tcsRate || 0.1);
+    let tdsRate = data.tdsRate !== undefined && data.tdsRate !== '' ? Number(data.tdsRate) : (disp.tdsRate || 0);
+    let tcsRate = data.tcsRate !== undefined && data.tcsRate !== '' ? Number(data.tcsRate) : (disp.tcsRate !== undefined ? disp.tcsRate : 0);
 
     let taxableAmount = 0;
     let cgstAmount = 0;
@@ -2573,10 +2635,10 @@ const dbController = {
       }
       billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
 
-      tdsAmount = Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
+      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
+      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = Math.round((billAmount - tdsAmount + tcsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
     }
 
     dbState.dispatches[index] = {
@@ -3187,8 +3249,8 @@ const dbController = {
 
     const settlementRate = data.settlementRate !== undefined ? Number(data.settlementRate) : st.settlementRate;
     const rateUnit = data.rateUnit || st.rateUnit || 'per_kg_ep';
-    const tcsRate = data.tcsRate !== undefined ? Number(data.tcsRate) : (st.tcsRate || 0.1);
-    const tdsRate = data.tdsRate !== undefined ? Number(data.tdsRate) : (st.tdsRate || 0);
+    const tcsRate = data.tcsRate !== undefined && data.tcsRate !== '' ? Number(data.tcsRate) : (st.tcsRate !== undefined ? st.tcsRate : 0.1);
+    const tdsRate = data.tdsRate !== undefined && data.tdsRate !== '' ? Number(data.tdsRate) : (st.tdsRate !== undefined ? st.tdsRate : 0);
 
     let settlementGrossAmount = 0;
     if (rateUnit === 'per_bag') {
@@ -3200,12 +3262,12 @@ const dbController = {
     }
     settlementGrossAmount = Math.round(settlementGrossAmount * 100) / 100;
 
-    const tdsAmount = Math.round((settlementGrossAmount * (tdsRate / 100)) * 100) / 100;
-    const tcsAmount = Math.round((settlementGrossAmount * (tcsRate / 100)) * 100) / 100;
+    const tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((settlementGrossAmount * (tdsRate / 100)) * 100) / 100;
+    const tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((settlementGrossAmount * (tcsRate / 100)) * 100) / 100;
     const cgstAmount = Number(st.cgstAmount) || 0;
     const sgstAmount = Number(st.sgstAmount) || 0;
     const igstAmount = Number(st.igstAmount) || 0;
-    const settlementNetAmount = Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount + tcsAmount) * 100) / 100;
+    const settlementNetAmount = data.settlementNetAmount !== undefined ? Number(data.settlementNetAmount) : Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount + tcsAmount - tdsAmount) * 100) / 100;
 
     dbState.settlements[index] = {
       ...st,
@@ -4253,7 +4315,7 @@ const dbController = {
         dailyStorageInEP += (arr.remainingEndProduct !== undefined ? Number(arr.remainingEndProduct) : ep);
       }
       if (arr.status === 'billed' || arr.status === 'cash_bill') {
-        dailyTotalBill += (Number(arr.netAmount) || Number(arr.billAmount) || 0);
+        dailyTotalBill += getEffectiveArrivalNetAmount(arr);
         if (arr.rate > 0) {
           totalRateSum += arr.rate;
           billedArrivalsCount++;
@@ -4277,7 +4339,7 @@ const dbController = {
         dailyStorageOutBags += (d.remainingBags !== undefined ? Number(d.remainingBags) : b);
         dailyStorageOutEP += (d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : ep);
       } else {
-        dailyDispatchValue += (Number(d.netAmount) || Number(d.billAmount) || 0);
+        dailyDispatchValue += getEffectiveDispatchNetAmount(d);
       }
     });
 
@@ -4287,7 +4349,7 @@ const dbController = {
     settlements.forEach(s => {
       dailySettledBags += (Number(s.settledBags) || 0);
       dailySettledEP += (Number(s.settledEndProduct) || 0);
-      dailySettledValue += (Number(s.settlementNetAmount) || Number(s.settlementGrossAmount) || 0);
+      dailySettledValue += getEffectiveSettlementNetAmount(s);
     });
 
     const dailyAvgRate = billedArrivalsCount > 0 ? totalRateSum / billedArrivalsCount : 0;
@@ -4356,9 +4418,10 @@ const dbController = {
       }
 
       if (arr.status === 'billed' || arr.status === 'cash_bill') {
-        totalPurchasesValue += (Number(arr.netAmount) || Number(arr.billAmount) || 0);
-        totalTcsAllTime += (Number(arr.tcsAmount) || 0);
-        totalTdsAllTime += (Number(arr.tdsAmount) || 0);
+        totalPurchasesValue += getEffectiveArrivalNetAmount(arr);
+        const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * Number(arr.rate)) || 0;
+        totalTcsAllTime += Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+        totalTdsAllTime += Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
         totalGstAllTime += (Number(arr.cgstAmount) || 0) + (Number(arr.sgstAmount) || 0) + (Number(arr.igstAmount) || 0);
       }
     });
@@ -4380,22 +4443,24 @@ const dbController = {
       }
 
       if (disp.status === 'billed' || disp.status === 'cash_bill') {
-        totalSalesValue += (Number(disp.netAmount) || Number(disp.billAmount) || 0);
-        totalTcsAllTime += (Number(disp.tcsAmount) || 0);
-        totalTdsAllTime += (Number(disp.tdsAmount) || 0);
+        totalSalesValue += getEffectiveDispatchNetAmount(disp);
+        const taxable = Number(disp.taxableAmount) || (Number(disp.weight) * Number(disp.rate)) || 0;
+        totalTcsAllTime += Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
+        totalTdsAllTime += Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
         totalGstAllTime += (Number(disp.cgstAmount) || 0) + (Number(disp.sgstAmount) || 0) + (Number(disp.igstAmount) || 0);
       }
     });
 
     (dbState.settlements || []).forEach(set => {
-      const bill = Number(set.settlementNetAmount) || Number(set.settlementGrossAmount) || 0;
+      const bill = getEffectiveSettlementNetAmount(set);
       if (set.settlementCategory === 'sales_storage') {
         totalSalesValue += bill;
       } else {
         totalPurchasesValue += bill;
       }
-      totalTcsAllTime += (Number(set.tcsAmount) || 0);
-      totalTdsAllTime += (Number(set.tdsAmount) || 0);
+      const gross = Number(set.settlementGrossAmount) || 0;
+      totalTcsAllTime += Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+      totalTdsAllTime += Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
     });
 
     (dbState.payments || []).forEach(p => {

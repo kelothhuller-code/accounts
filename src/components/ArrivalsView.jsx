@@ -111,6 +111,7 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
       { key: 'status', label: 'Status' },
       { key: 'billAmount', label: 'Gross Bill (₹)' },
       { key: 'tcsAmount', label: 'TCS (₹)' },
+      { key: 'tdsAmount', label: 'TDS (₹)' },
       { key: 'netAmount', label: 'Net Bill (₹)' },
       { key: 'remarks', label: 'Remarks' },
     ];
@@ -427,17 +428,18 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
                 <th className="num">Rate</th>
                 <th>Status</th>
                 <th className="num">Gross Bill</th>
-                <th className="num">TCS</th>
+                <th className="num">TCS (+)</th>
+                <th className="num">TDS (-)</th>
                 <th className="num">Net Bill</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="15" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>Loading arrivals...</td></tr>
+                <tr><td colSpan="16" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>Loading arrivals...</td></tr>
               ) : filteredArrivals.length === 0 ? (
                 <tr>
-                  <td colSpan="15" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
+                  <td colSpan="16" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
                     No arrivals recorded for this filter. Click <strong>+ New Arrival (Alt+A)</strong> to add.
                   </td>
                 </tr>
@@ -491,10 +493,15 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
                           {a.status === 'storage' ? `📦 Storage (${a.remainingBags}b)` : a.status}
                         </span>
                       </td>
-                      <td className="num">{a.status === 'storage' ? '-' : `₹${(a.billAmount || 0).toLocaleString()}`}</td>
-                      <td className="num" style={{ color: '#dc2626' }}>{a.status === 'storage' ? '-' : `₹${(a.tcsAmount || 0).toLocaleString()}`}</td>
+                      <td className="num">{a.status === 'storage' ? '-' : `₹${(Number(a.billAmount) || Number(a.taxableAmount) || 0).toLocaleString()}`}</td>
+                      <td className="num" style={{ color: Number(a.tcsAmount) > 0 ? '#059669' : '#94a3b8' }}>
+                        {a.status === 'storage' ? '-' : (Number(a.tcsAmount) > 0 ? `+₹${(a.tcsAmount || 0).toLocaleString()}` : '-')}
+                      </td>
+                      <td className="num" style={{ color: Number(a.tdsAmount) > 0 ? '#dc2626' : '#94a3b8' }}>
+                        {a.status === 'storage' ? '-' : (Number(a.tdsAmount) > 0 ? `-₹${(a.tdsAmount || 0).toLocaleString()}` : '-')}
+                      </td>
                       <td className="num" style={{ fontWeight: 700, color: a.status === 'storage' ? '#64748b' : '#059669' }}>
-                        {a.status === 'storage' ? '-' : `₹${(a.netAmount || 0).toLocaleString()}`}
+                        {a.status === 'storage' ? '-' : `₹${(Number(a.netAmount) || (Number(a.billAmount) || 0) + (Number(a.tcsAmount) || 0) - (Number(a.tdsAmount) || 0)).toLocaleString()}`}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>

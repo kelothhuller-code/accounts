@@ -54,6 +54,56 @@ function saveBrowserStore(store) {
   localStorage.setItem(BROWSER_STORAGE_KEY, JSON.stringify(store));
 }
 
+function getEffectiveArrivalNetAmount(arr) {
+  if (!arr) return 0;
+  const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * Number(arr.rate)) || 0;
+  const cgst = Number(arr.cgstAmount) || 0;
+  const sgst = Number(arr.sgstAmount) || 0;
+  const igst = Number(arr.igstAmount) || 0;
+  const billBase = Number(arr.billAmount) || (taxable + cgst + sgst + igst);
+  const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+  const tds = Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
+
+  let net = Number(arr.netAmount);
+  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
+    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  }
+  return net;
+}
+
+function getEffectiveDispatchNetAmount(disp) {
+  if (!disp) return 0;
+  const taxable = Number(disp.taxableAmount) || (Number(disp.weight) * Number(disp.rate)) || 0;
+  const cgst = Number(disp.cgstAmount) || 0;
+  const sgst = Number(disp.sgstAmount) || 0;
+  const igst = Number(disp.igstAmount) || 0;
+  const billBase = Number(disp.billAmount) || (taxable + cgst + sgst + igst);
+  const tcs = Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
+  const tds = Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
+
+  let net = Number(disp.netAmount);
+  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
+    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  }
+  return net;
+}
+
+function getEffectiveSettlementNetAmount(set) {
+  if (!set) return 0;
+  const gross = Number(set.settlementGrossAmount) || 0;
+  const cgst = Number(set.cgstAmount) || 0;
+  const sgst = Number(set.sgstAmount) || 0;
+  const igst = Number(set.igstAmount) || 0;
+  const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+  const tds = Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
+
+  let net = Number(set.settlementNetAmount);
+  if (!net || isNaN(net) || (Math.abs(net - gross) < 0.01 && (tcs > 0 || tds > 0 || cgst > 0 || sgst > 0 || igst > 0))) {
+    net = Math.round((gross + cgst + sgst + igst + tcs - tds) * 100) / 100;
+  }
+  return net;
+}
+
 function mockBrowserFallback(action, payload) {
   const store = getBrowserStore();
   if (action === 'db:status') return { isMongoConnected: false, mongoError: 'Web Browser Mode' };
@@ -208,11 +258,11 @@ function mockBrowserFallback(action, payload) {
 
       const avgOutturn = storageBags > 0 ? (storageEP / storageBags) : 0;
 
-      const purArrivals = arrs.filter(a => a.status === 'billed' || a.status === 'cash_bill').reduce((acc, a) => acc + (Number(a.netAmount) || Number(a.billAmount) || 0), 0);
-      const purSettlements = sets.filter(st => st.settlementCategory !== 'sales_storage').reduce((acc, st) => acc + (Number(st.settlementNetAmount) || Number(st.settlementGrossAmount) || 0), 0);
+      const purArrivals = arrs.filter(a => a.status === 'billed' || a.status === 'cash_bill').reduce((acc, a) => acc + getEffectiveArrivalNetAmount(a), 0);
+      const purSettlements = sets.filter(st => st.settlementCategory !== 'sales_storage').reduce((acc, st) => acc + getEffectiveSettlementNetAmount(st), 0);
       const totPurchases = purArrivals + purSettlements;
-      const saleDispatches = disps.filter(d => d.status === 'billed' || d.status === 'cash_bill').reduce((acc, d) => acc + (Number(d.netAmount) || Number(d.billAmount) || 0), 0);
-      const saleSettlements = sets.filter(st => st.settlementCategory === 'sales_storage').reduce((acc, st) => acc + (Number(st.settlementNetAmount) || Number(st.settlementGrossAmount) || 0), 0);
+      const saleDispatches = disps.filter(d => d.status === 'billed' || d.status === 'cash_bill').reduce((acc, d) => acc + getEffectiveDispatchNetAmount(d), 0);
+      const saleSettlements = sets.filter(st => st.settlementCategory === 'sales_storage').reduce((acc, st) => acc + getEffectiveSettlementNetAmount(st), 0);
       const totSales = saleDispatches + saleSettlements;
       const totPaid = pays.filter(p => p.type === 'payment_paid' || !p.type).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
       const totRecv = pays.filter(p => p.type === 'payment_received').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
@@ -266,12 +316,12 @@ function mockBrowserFallback(action, payload) {
     const pays = store.payments.filter(p => p.supplierId === payload.id);
     const epTrfs = (store.epTransfers || []).filter(t => t.fromPartyId === payload.id || t.toPartyId === payload.id);
 
-    const purArrivals = arrs.filter(a => a.status === 'billed' || a.status === 'cash_bill').reduce((acc, a) => acc + (Number(a.netAmount) || Number(a.billAmount) || 0), 0);
-    const purSettlements = sets.filter(st => st.settlementCategory !== 'sales_storage').reduce((acc, st) => acc + (Number(st.settlementNetAmount) || Number(st.settlementGrossAmount) || 0), 0);
+    const purArrivals = arrs.filter(a => a.status === 'billed' || a.status === 'cash_bill').reduce((acc, a) => acc + getEffectiveArrivalNetAmount(a), 0);
+    const purSettlements = sets.filter(st => st.settlementCategory !== 'sales_storage').reduce((acc, st) => acc + getEffectiveSettlementNetAmount(st), 0);
     const totPurchases = purArrivals + purSettlements;
 
-    const saleDispatches = disps.filter(d => d.status === 'billed' || d.status === 'cash_bill').reduce((acc, d) => acc + (Number(d.netAmount) || Number(d.billAmount) || 0), 0);
-    const saleSettlements = sets.filter(st => st.settlementCategory === 'sales_storage').reduce((acc, st) => acc + (Number(st.settlementNetAmount) || Number(st.settlementGrossAmount) || 0), 0);
+    const saleDispatches = disps.filter(d => d.status === 'billed' || d.status === 'cash_bill').reduce((acc, d) => acc + getEffectiveDispatchNetAmount(d), 0);
+    const saleSettlements = sets.filter(st => st.settlementCategory === 'sales_storage').reduce((acc, st) => acc + getEffectiveSettlementNetAmount(st), 0);
     const totSales = saleDispatches + saleSettlements;
 
     const totPaid = pays.filter(p => p.type === 'payment_paid' || !p.type).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
@@ -857,9 +907,10 @@ function mockBrowserFallback(action, payload) {
         item.storeInBags += remBags; item.storeInWeight += remWeight; item.storeInEP += remEP;
       }
       if (arr.status === 'billed' || arr.status === 'cash_bill') {
-        totalPurchasesValue += (Number(arr.netAmount) || Number(arr.billAmount) || 0);
-        totalTcsAllTime += (Number(arr.tcsAmount) || 0);
-        totalTdsAllTime += (Number(arr.tdsAmount) || 0);
+        totalPurchasesValue += getEffectiveArrivalNetAmount(arr);
+        const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * Number(arr.rate)) || 0;
+        totalTcsAllTime += Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+        totalTdsAllTime += Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
         totalGstAllTime += (Number(arr.cgstAmount) || 0) + (Number(arr.sgstAmount) || 0) + (Number(arr.igstAmount) || 0);
       }
     });
@@ -876,19 +927,21 @@ function mockBrowserFallback(action, payload) {
         }
       }
       if (disp.status === 'billed' || disp.status === 'cash_bill') {
-        totalSalesValue += (Number(disp.netAmount) || Number(disp.billAmount) || 0);
-        totalTcsAllTime += (Number(disp.tcsAmount) || 0);
-        totalTdsAllTime += (Number(disp.tdsAmount) || 0);
+        totalSalesValue += getEffectiveDispatchNetAmount(disp);
+        const taxable = Number(disp.taxableAmount) || (Number(disp.weight) * Number(disp.rate)) || 0;
+        totalTcsAllTime += Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
+        totalTdsAllTime += Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
         totalGstAllTime += (Number(disp.cgstAmount) || 0) + (Number(disp.sgstAmount) || 0) + (Number(disp.igstAmount) || 0);
       }
     });
 
     store.settlements.forEach(set => {
-      const bill = Number(set.settlementNetAmount) || Number(set.settlementGrossAmount) || 0;
+      const bill = getEffectiveSettlementNetAmount(set);
       if (set.settlementCategory === 'sales_storage') totalSalesValue += bill;
       else totalPurchasesValue += bill;
-      totalTcsAllTime += (Number(set.tcsAmount) || 0);
-      totalTdsAllTime += (Number(set.tdsAmount) || 0);
+      const gross = Number(set.settlementGrossAmount) || 0;
+      totalTcsAllTime += Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+      totalTdsAllTime += Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
     });
 
     store.payments.forEach(p => {

@@ -154,6 +154,8 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
       { key: 'totalSalesBilled', label: 'Total Billed Sales (₹)' },
       { key: 'totalPaid', label: 'Total Paid (₹)' },
       { key: 'totalReceived', label: 'Total Received (₹)' },
+      { key: 'totalTcsDeducted', label: 'TCS Deducted (₹)' },
+      { key: 'totalTdsDeducted', label: 'TDS Deducted (₹)' },
       { key: 'netPayable', label: 'Net Financial Balance (₹)' },
     ];
 
@@ -450,6 +452,12 @@ export default function SuppliersView({ onSelectSupplier, onAddArrivalForSupplie
                         </span>
                       ) : (
                         <span style={{ color: '#64748b' }}>₹0 (Cleared)</span>
+                      )}
+                      {(Number(s.totalTcsDeducted) > 0 || Number(s.totalTdsDeducted) > 0) && (
+                        <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '2px', display: 'flex', gap: '4px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          {Number(s.totalTcsDeducted) > 0 && <span style={{ color: '#059669', fontWeight: 600 }}>TCS: +₹{s.totalTcsDeducted.toLocaleString('en-IN')}</span>}
+                          {Number(s.totalTdsDeducted) > 0 && <span style={{ color: '#dc2626', fontWeight: 600 }}>TDS: -₹{s.totalTdsDeducted.toLocaleString('en-IN')}</span>}
+                        </div>
                       )}
                     </td>
                     <td style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>

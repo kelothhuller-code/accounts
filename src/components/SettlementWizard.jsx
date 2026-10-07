@@ -318,10 +318,16 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         isDirectWeight,
         settlementRate: numRate,
         rateUnit,
+        settlementGrossAmount,
         cgstRate: numCgstRate,
+        cgstAmount,
         sgstRate: numSgstRate,
+        sgstAmount,
         tcsRate: numTcsRate,
+        tcsAmount,
         tdsRate: numTdsRate,
+        tdsAmount,
+        settlementNetAmount,
         date,
         notes
       };
@@ -972,15 +978,22 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   </div>
 
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                      Gross: ₹{grossSettlementAmount.toLocaleString('en-IN')} | TCS: +₹{tcsAmount}
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                      <span>Gross: ₹{grossSettlementAmount.toLocaleString('en-IN')}</span>
+                      {tcsAmount > 0 && <span style={{ color: '#38bdf8', fontWeight: 600 }}>TCS (+{numTcsRate}%): +₹{tcsAmount.toLocaleString('en-IN')}</span>}
+                      {tdsAmount > 0 && <span style={{ color: '#f87171', fontWeight: 600 }}>TDS (-{numTdsRate}%): -₹{tdsAmount.toLocaleString('en-IN')}</span>}
                     </div>
-                    <div style={{ fontSize: '1.65rem', fontWeight: 800, color: '#38bdf8' }}>
+                    <div style={{ fontSize: '1.65rem', fontWeight: 800, color: '#38bdf8', marginTop: '0.15rem' }}>
                       ₹{netSettlementAmount.toLocaleString('en-IN')}
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: '#38bdf8' }}>
-                      Net Settlement Value ({settlementCategory === 'sales_storage' ? 'Receivable' : 'Payable'})
+                    <div style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: 600 }}>
+                      Net Settlement Value ({settlementCategory === 'sales_storage' ? 'Debit / Receivable' : 'Credit / Payable'})
                     </div>
+                    {selectedSupplier && (
+                      <div style={{ fontSize: '0.72rem', color: '#cbd5e1', marginTop: '0.2rem' }}>
+                        Ledger Balance: ₹{Math.abs(selectedSupplier.netPayable || 0).toLocaleString('en-IN')} {selectedSupplier.netPayable >= 0 ? '(Credit)' : '(Debit)'} → Projected: ₹{Math.abs((selectedSupplier.netPayable || 0) + (settlementCategory === 'sales_storage' ? -netSettlementAmount : netSettlementAmount)).toLocaleString('en-IN')} {(selectedSupplier.netPayable || 0) + (settlementCategory === 'sales_storage' ? -netSettlementAmount : netSettlementAmount) >= 0 ? '(Credit)' : '(Debit)'}
+                      </div>
+                    )}
                   </div>
                 </div>
 

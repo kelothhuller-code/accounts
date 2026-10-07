@@ -652,6 +652,8 @@ export default function DispatchesView({
                 <th className="num">Clean EP (kg)</th>
                 <th className="num">Sale Rate</th>
                 <th className="num">GST / Tax</th>
+                <th className="num">TCS (+)</th>
+                <th className="num">TDS (-)</th>
                 <th>Status / Mode</th>
                 <th className="num">Net Invoice Amount</th>
                 <th>Actions</th>
@@ -660,13 +662,13 @@ export default function DispatchesView({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="13" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
+                  <td colSpan="15" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
                     Loading dispatches...
                   </td>
                 </tr>
               ) : filteredDispatches.length === 0 ? (
                 <tr>
-                  <td colSpan="13" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
+                  <td colSpan="15" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
                     No dispatch records found for this filter. Click <strong>+ New Dispatch (Alt+K)</strong> to add.
                   </td>
                 </tr>
@@ -728,6 +730,24 @@ export default function DispatchesView({
                           <span style={{ color: '#94a3b8' }}>-</span>
                         )}
                       </td>
+                      <td className="num">
+                        {Number(d.tcsAmount) > 0 ? (
+                          <span style={{ color: '#0369a1', fontSize: '0.82rem', fontWeight: 600 }}>
+                            +₹{(Number(d.tcsAmount) || 0).toLocaleString()}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#94a3b8' }}>-</span>
+                        )}
+                      </td>
+                      <td className="num">
+                        {Number(d.tdsAmount) > 0 ? (
+                          <span style={{ color: '#dc2626', fontSize: '0.82rem', fontWeight: 600 }}>
+                            -₹{(Number(d.tdsAmount) || 0).toLocaleString()}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#94a3b8' }}>-</span>
+                        )}
+                      </td>
                       <td>
                         {d.billType === 'cash_bill' ? (
                           <span className="badge badge-secondary" style={{ background: '#f1f5f9', color: '#475569' }}>
@@ -747,7 +767,7 @@ export default function DispatchesView({
                           color: isStoreOut ? '#64748b' : '#059669',
                         }}
                       >
-                        {isStoreOut ? 'Store Out' : `₹${(d.netAmount || d.billAmount || 0).toLocaleString()}`}
+                        {isStoreOut ? 'Store Out' : `₹${(Number(d.netAmount) || (Number(d.billAmount) || 0) + (Number(d.tcsAmount) || 0) - (Number(d.tdsAmount) || 0)).toLocaleString()}`}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
