@@ -322,6 +322,15 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'db:reset-database':
         return await dbController.clearLocalData(payload || {});
 
+      case 'db:push-to-mongo':
+        return await dbController.pushToMongo();
+
+      case 'db:pull-from-mongo':
+        return await dbController.pullFromMongo();
+
+      case 'db:deduplicate-parties':
+        return dbController.deduplicateSuppliers();
+
       // PRODUCTS
       case 'products:get':
         return dbController.getProducts();

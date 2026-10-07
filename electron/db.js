@@ -685,6 +685,137 @@ function mergeCollections(localList = [], remoteList = []) {
   return Array.from(map.values());
 }
 
+function mergeSuppliers(localList = [], remoteList = []) {
+  const map = new Map();
+  const nameToId = new Map();
+
+  for (const item of (localList || [])) {
+    if (item && item.id) {
+      map.set(item.id, item);
+      const normName = (item.name || '').trim().toLowerCase();
+      if (normName) nameToId.set(normName, item.id);
+    }
+  }
+
+  for (const item of (remoteList || [])) {
+    if (!item) continue;
+    const normName = (item.name || '').trim().toLowerCase();
+    const existingId = (item.id && map.has(item.id)) ? item.id : (normName ? nameToId.get(normName) : null);
+
+    if (existingId) {
+      const existing = map.get(existingId);
+      const isExistingAllUpper = existing.name === existing.name.toUpperCase();
+      const isItemAllUpper = item.name === item.name.toUpperCase();
+      const cleanName = (isExistingAllUpper && !isItemAllUpper) ? item.name : (existing.name || item.name);
+
+      const merged = {
+        ...existing,
+        ...item,
+        id: existing.id,
+        name: cleanName,
+        openingBalance: (existing.openingBalance !== undefined && existing.openingBalance !== 0) 
+          ? existing.openingBalance 
+          : (item.openingBalance || 0),
+        openingBalanceType: existing.openingBalanceType || item.openingBalanceType || 'credit',
+        openingStorageBags: (existing.openingStorageBags || 0) || (item.openingStorageBags || 0),
+        openingStorageEP: (existing.openingStorageEP || 0) || (item.openingStorageEP || 0),
+        phone: existing.phone || item.phone || '',
+        place: existing.place || item.place || '',
+        gst: existing.gst || item.gst || '',
+        notes: existing.notes || item.notes || ''
+      };
+      map.set(existingId, merged);
+    } else if (item.id) {
+      map.set(item.id, item);
+      if (normName) nameToId.set(normName, item.id);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function deduplicateSuppliersInDb() {
+  const nameMap = new Map();
+  const duplicateReplacements = new Map(); // dupId -> primaryId
+  const uniqueSuppliers = [];
+
+  for (const sup of (dbState.suppliers || [])) {
+    if (!sup || !sup.name) continue;
+    const norm = sup.name.trim().toLowerCase();
+    if (!nameMap.has(norm)) {
+      nameMap.set(norm, sup);
+      uniqueSuppliers.push(sup);
+    } else {
+      const primary = nameMap.get(norm);
+      duplicateReplacements.set(sup.id, primary.id);
+
+      const isSupAllUpper = sup.name === sup.name.toUpperCase();
+      const isPrimaryAllUpper = primary.name === primary.name.toUpperCase();
+      if (isPrimaryAllUpper && !isSupAllUpper) {
+        primary.name = sup.name;
+      }
+
+      if ((!primary.openingBalance || primary.openingBalance === 0) && sup.openingBalance) {
+        primary.openingBalance = sup.openingBalance;
+        primary.openingBalanceType = sup.openingBalanceType || 'credit';
+      }
+      if ((!primary.openingStorageBags || primary.openingStorageBags === 0) && sup.openingStorageBags) {
+        primary.openingStorageBags = sup.openingStorageBags;
+      }
+      if ((!primary.openingStorageEP || primary.openingStorageEP === 0) && sup.openingStorageEP) {
+        primary.openingStorageEP = sup.openingStorageEP;
+      }
+      if (!primary.phone && sup.phone) primary.phone = sup.phone;
+      if (!primary.place && sup.place) primary.place = sup.place;
+      if (!primary.gst && sup.gst) primary.gst = sup.gst;
+      if (!primary.notes && sup.notes) primary.notes = sup.notes;
+    }
+  }
+
+  if (duplicateReplacements.size > 0) {
+    dbState.suppliers = uniqueSuppliers;
+
+    (dbState.arrivals || []).forEach(a => {
+      if (duplicateReplacements.has(a.supplierId)) {
+        a.supplierId = duplicateReplacements.get(a.supplierId);
+      }
+    });
+    (dbState.dispatches || []).forEach(d => {
+      if (duplicateReplacements.has(d.supplierId)) d.supplierId = duplicateReplacements.get(d.supplierId);
+      if (duplicateReplacements.has(d.partyId)) d.partyId = duplicateReplacements.get(d.partyId);
+    });
+    (dbState.commitments || []).forEach(c => {
+      if (duplicateReplacements.has(c.supplierId)) c.supplierId = duplicateReplacements.get(c.supplierId);
+      if (duplicateReplacements.has(c.partyId)) c.partyId = duplicateReplacements.get(c.partyId);
+    });
+    (dbState.settlements || []).forEach(s => {
+      if (duplicateReplacements.has(s.supplierId)) s.supplierId = duplicateReplacements.get(s.supplierId);
+    });
+    (dbState.payments || []).forEach(p => {
+      if (duplicateReplacements.has(p.supplierId)) p.supplierId = duplicateReplacements.get(p.supplierId);
+    });
+    (dbState.epTransfers || []).forEach(t => {
+      if (duplicateReplacements.has(t.fromPartyId)) t.fromPartyId = duplicateReplacements.get(t.fromPartyId);
+      if (duplicateReplacements.has(t.toPartyId)) t.toPartyId = duplicateReplacements.get(t.toPartyId);
+    });
+    (dbState.commitmentWashes || []).forEach(w => {
+      if (duplicateReplacements.has(w.supplierId)) w.supplierId = duplicateReplacements.get(w.supplierId);
+      if (duplicateReplacements.has(w.partyId)) w.partyId = duplicateReplacements.get(w.partyId);
+    });
+
+    saveLocalDb();
+
+    if (isMongoConnected && MongoSupplier) {
+      for (const dupId of duplicateReplacements.keys()) {
+        MongoSupplier.deleteOne({ id: dupId }).catch(() => {});
+      }
+    }
+    console.log(`Deduplication complete: merged ${duplicateReplacements.size} duplicate parties.`);
+  }
+
+  return { mergedCount: duplicateReplacements.size };
+}
+
 async function loadFromMongo() {
   if (!isMongoConnected) return;
   try {
@@ -723,6 +854,7 @@ async function loadFromMongo() {
       }
     }
 
+    deduplicateSuppliersInDb();
     rebuildProductIndices();
     saveLocalDb();
     console.log('Local cache cleanly reloaded from MongoDB collections.');
@@ -734,6 +866,8 @@ async function loadFromMongo() {
 async function syncWithMongo() {
   if (!isMongoConnected) return;
   try {
+    deduplicateSuppliersInDb();
+
     // 1. Upload local data to Mongo so any locally added items get pushed to cloud
     for (const sup of (dbState.suppliers || [])) {
       await MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true });
@@ -806,7 +940,7 @@ async function syncWithMongo() {
     const cleanedMills = (mills || []).map(m => { delete m._id; delete m.__v; return m; });
     const cleanedOps = (ops || []).map(o => { delete o._id; delete o.__v; return o; });
 
-    dbState.suppliers = mergeCollections(dbState.suppliers, cleanedSups);
+    dbState.suppliers = mergeSuppliers(dbState.suppliers, cleanedSups);
     dbState.arrivals = mergeCollections(dbState.arrivals, cleanedArrs);
     dbState.dispatches = mergeCollections(dbState.dispatches, cleanedDisps);
     dbState.commitments = mergeCollections(dbState.commitments, cleanedComms);
@@ -826,6 +960,7 @@ async function syncWithMongo() {
       }
     }
 
+    deduplicateSuppliersInDb();
     saveLocalDb();
   } catch (err) {
     console.error('Error syncing with MongoDB:', err);
@@ -1259,6 +1394,108 @@ const dbController = {
       await loadFromMongo();
     }
     return dbController.getStatus();
+  },
+
+  async pushToMongo() {
+    ensureDatabaseReady();
+    if (!isMongoConnected) {
+      throw new Error('MongoDB is not connected. Please verify your connection in Settings.');
+    }
+    deduplicateSuppliersInDb();
+
+    // 1. Upsert all local records to MongoDB
+    for (const sup of (dbState.suppliers || [])) {
+      await MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true });
+    }
+    for (const arr of (dbState.arrivals || [])) {
+      await MongoArrival.findOneAndUpdate({ id: arr.id }, arr, { upsert: true });
+    }
+    for (const disp of (dbState.dispatches || [])) {
+      await MongoDispatch.findOneAndUpdate({ id: disp.id }, disp, { upsert: true });
+    }
+    for (const com of (dbState.commitments || [])) {
+      await MongoCommitment.findOneAndUpdate({ id: com.id }, com, { upsert: true });
+    }
+    for (const set of (dbState.settlements || [])) {
+      await MongoSettlement.findOneAndUpdate({ id: set.id }, set, { upsert: true });
+    }
+    for (const pay of (dbState.payments || [])) {
+      await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
+    }
+    for (const trf of (dbState.epTransfers || [])) {
+      await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
+    }
+    for (const wash of (dbState.commitmentWashes || [])) {
+      await MongoCommitmentWash.findOneAndUpdate({ id: wash.id }, wash, { upsert: true });
+    }
+    for (const prod of (dbState.products || [])) {
+      await MongoProduct.findOneAndUpdate({ id: prod.id }, prod, { upsert: true });
+    }
+    for (const mill of (dbState.millingLogs || [])) {
+      await MongoMillingLog.findOneAndUpdate({ id: mill.id }, mill, { upsert: true });
+    }
+    for (const op of (dbState.openingStockEntries || [])) {
+      await MongoOpeningStockEntry.findOneAndUpdate({ id: op.id }, op, { upsert: true });
+    }
+    if (MongoProcessingProfile && dbState.settings && dbState.settings.processingProfiles) {
+      for (const [sourceProduct, outputs] of Object.entries(dbState.settings.processingProfiles)) {
+        await MongoProcessingProfile.findOneAndUpdate(
+          { id: sourceProduct },
+          { id: sourceProduct, sourceProduct, outputs, updatedAt: new Date() },
+          { upsert: true }
+        );
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Local database successfully pushed to MongoDB cloud!',
+      counts: {
+        suppliers: (dbState.suppliers || []).length,
+        arrivals: (dbState.arrivals || []).length,
+        dispatches: (dbState.dispatches || []).length,
+        commitments: (dbState.commitments || []).length,
+        settlements: (dbState.settlements || []).length,
+        payments: (dbState.payments || []).length,
+        products: (dbState.products || []).length
+      }
+    };
+  },
+
+  async pullFromMongo() {
+    ensureDatabaseReady();
+    if (!isMongoConnected) {
+      throw new Error('MongoDB is not connected. Please verify your connection in Settings.');
+    }
+    await loadFromMongo();
+    deduplicateSuppliersInDb();
+
+    return {
+      success: true,
+      message: 'MongoDB cloud data successfully pulled into local database!',
+      counts: {
+        suppliers: (dbState.suppliers || []).length,
+        arrivals: (dbState.arrivals || []).length,
+        dispatches: (dbState.dispatches || []).length,
+        commitments: (dbState.commitments || []).length,
+        settlements: (dbState.settlements || []).length,
+        payments: (dbState.payments || []).length,
+        products: (dbState.products || []).length
+      }
+    };
+  },
+
+  deduplicateSuppliers() {
+    ensureDatabaseReady();
+    const result = deduplicateSuppliersInDb();
+    return {
+      success: true,
+      message: result.mergedCount > 0 
+        ? `Cleaned and merged ${result.mergedCount} duplicate party accounts.`
+        : 'No duplicate party accounts found. All party accounts are clean.',
+      mergedCount: result.mergedCount,
+      totalSuppliers: (dbState.suppliers || []).length
+    };
   },
 
   // PRODUCTS

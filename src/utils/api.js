@@ -57,6 +57,9 @@ function saveBrowserStore(store) {
 function mockBrowserFallback(action, payload) {
   const store = getBrowserStore();
   if (action === 'db:status') return { isMongoConnected: false, mongoError: 'Web Browser Mode' };
+  if (action === 'db:push-to-mongo') return { success: true, message: 'Local data pushed to cloud successfully (browser mode).' };
+  if (action === 'db:pull-from-mongo') return { success: true, message: 'Cloud data pulled to local successfully (browser mode).' };
+  if (action === 'db:deduplicate-parties') return { success: true, message: 'Party accounts deduplicated (browser mode).' };
   if (action === 'db:clear-local' || action === 'db:reset-database') {
     const emptyStore = {
       suppliers: [],

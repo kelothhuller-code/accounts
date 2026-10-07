@@ -13,7 +13,10 @@ import {
   FileText, 
   ShieldCheck, 
   ArrowRight,
-  Archive
+  Archive,
+  UploadCloud,
+  DownloadCloud,
+  Users
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 
@@ -22,6 +25,8 @@ export default function SettingsModal({ isOpen, onClose }) {
   const [status, setStatus] = useState(null);
   const [mongoUri, setMongoUri] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncType, setSyncType] = useState(null);
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
 
@@ -172,6 +177,77 @@ export default function SettingsModal({ isOpen, onClose }) {
       setMessage('Failed to sync Mongo: ' + e.message);
     } finally {
       setConnecting(false);
+    }
+  };
+
+  const handlePushToMongo = async () => {
+    setSyncing(true);
+    setSyncType('push');
+    setMessage('');
+    setIsError(false);
+    try {
+      const res = await dbAction('db:push-to-mongo');
+      if (res && res.success) {
+        setMessage(`☁️ ${res.message} (${res.counts?.suppliers || 0} parties, ${res.counts?.arrivals || 0} arrivals, ${res.counts?.dispatches || 0} dispatches synced)`);
+        await loadStatus();
+      } else {
+        setIsError(true);
+        setMessage(res?.message || 'Push failed');
+      }
+    } catch (err) {
+      setIsError(true);
+      setMessage('Failed to push to MongoDB: ' + err.message);
+    } finally {
+      setSyncing(false);
+      setSyncType(null);
+    }
+  };
+
+  const handlePullFromMongo = async () => {
+    if (!window.confirm('Download and pull latest data from MongoDB to this device?\n\nThis will refresh your local database with records entered from your other devices.')) {
+      return;
+    }
+    setSyncing(true);
+    setSyncType('pull');
+    setMessage('');
+    setIsError(false);
+    try {
+      const res = await dbAction('db:pull-from-mongo');
+      if (res && res.success) {
+        setMessage(`📥 ${res.message} (${res.counts?.suppliers || 0} parties, ${res.counts?.arrivals || 0} arrivals, ${res.counts?.dispatches || 0} dispatches loaded)`);
+        await loadStatus();
+        setTimeout(() => window.location.reload(), 800);
+      } else {
+        setIsError(true);
+        setMessage(res?.message || 'Pull failed');
+      }
+    } catch (err) {
+      setIsError(true);
+      setMessage('Failed to pull from MongoDB: ' + err.message);
+    } finally {
+      setSyncing(false);
+      setSyncType(null);
+    }
+  };
+
+  const handleDeduplicateParties = async () => {
+    setSyncing(true);
+    setMessage('');
+    setIsError(false);
+    try {
+      const res = await dbAction('db:deduplicate-parties');
+      if (res && res.success) {
+        setMessage(`👥 ${res.message} (Total unique parties: ${res.totalSuppliers})`);
+        await loadStatus();
+      } else {
+        setIsError(true);
+        setMessage(res?.message || 'Deduplication failed');
+      }
+    } catch (err) {
+      setIsError(true);
+      setMessage('Failed to deduplicate parties: ' + err.message);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -574,6 +650,77 @@ export default function SettingsModal({ isOpen, onClose }) {
                     <span>{message}</span>
                   </div>
                 )}
+              </div>
+
+              {/* Multi-Device Cloud Synchronization Card */}
+              <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: '#1e293b' }}>
+                    <RefreshCw size={17} color="#2563eb" />
+                    <span>Multi-Device Cloud Synchronization</span>
+                  </div>
+                  <span className={`badge ${status?.isMongoConnected ? 'badge-green' : 'badge-amber'}`}>
+                    {status?.isMongoConnected ? 'Cloud Active' : 'Offline Mode'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.78rem', color: '#64748b', margin: 0, lineHeight: 1.45 }}>
+                  Use these buttons to keep your computers in sync. <strong>Push</strong> sends this computer's new records to MongoDB. <strong>Pull</strong> brings new records from other computers down to this device.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.2rem' }}>
+                  <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <UploadCloud size={16} color="#2563eb" />
+                      <span>Push Local → MongoDB</span>
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', flex: 1 }}>
+                      Uploads local arrivals, dispatches, and ledger transactions up to the cloud.
+                    </div>
+                    <button 
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={handlePushToMongo}
+                      disabled={syncing || !status?.isMongoConnected}
+                      style={{ width: '100%', justifyContent: 'center' }}
+                    >
+                      <UploadCloud size={13} className={syncType === 'push' ? 'animate-spin' : ''} />
+                      {syncType === 'push' ? 'Pushing Data...' : 'Push to Cloud (Mongo)'}
+                    </button>
+                  </div>
+
+                  <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <DownloadCloud size={16} color="#059669" />
+                      <span>Pull MongoDB → Local</span>
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', flex: 1 }}>
+                      Downloads latest records from other devices in the cloud into this device.
+                    </div>
+                    <button 
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={handlePullFromMongo}
+                      disabled={syncing || !status?.isMongoConnected}
+                      style={{ width: '100%', justifyContent: 'center', background: '#059669', color: '#fff', borderColor: '#059669' }}
+                    >
+                      <DownloadCloud size={13} className={syncType === 'pull' ? 'animate-spin' : ''} />
+                      {syncType === 'pull' ? 'Pulling Data...' : 'Pull to Local (From Mongo)'}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '0.35rem', paddingTop: '0.65rem', borderTop: '1px dashed #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Merge duplicate party accounts created across devices?</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.73rem' }}
+                    onClick={handleDeduplicateParties}
+                    disabled={syncing}
+                  >
+                    <Users size={12} /> Clean & Merge Duplicate Parties
+                  </button>
+                </div>
               </div>
 
               {/* Local File Path */}

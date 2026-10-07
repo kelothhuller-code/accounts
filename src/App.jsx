@@ -251,6 +251,7 @@ export default function App() {
         onOpenNewDispatch={() => { closeAllModals(); openNewDispatch(); }}
         onOpenCommodity={() => setShowCommodityModal(true)}
         onOpenSettings={() => setShowSettingsModal(true)}
+        onDataChanged={triggerRefresh}
         onLock={() => {
           sessionStorage.removeItem('coffee_auth');
           setIsAuthenticated(false);

@@ -13,19 +13,74 @@ import {
   Database,
   Lock,
   Boxes,
-  Calendar
+  Calendar,
+  UploadCloud,
+  DownloadCloud
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 
-export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onOpenNewDispatch, onOpenCommodity, onOpenSettings, onLock }) {
+export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onOpenNewDispatch, onOpenCommodity, onOpenSettings, onLock, onDataChanged }) {
   const [dbStatus, setDbStatus] = useState({ isMongoConnected: false });
   const [currentFy, setCurrentFy] = useState('2026-2027');
+  const [syncing, setSyncing] = useState(false);
+  const [syncType, setSyncType] = useState(null);
 
   useEffect(() => {
     checkStatus();
     const interval = setInterval(checkStatus, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  const handlePushToMongo = async (e) => {
+    e.stopPropagation();
+    if (!dbStatus.isMongoConnected) {
+      alert('MongoDB is not connected. Open Settings to connect.');
+      return;
+    }
+    setSyncing(true);
+    setSyncType('push');
+    try {
+      const res = await dbAction('db:push-to-mongo');
+      if (res && res.success) {
+        alert(`☁️ Push Complete!\n\n${res.message}\n• Synced ${res.counts?.suppliers || 0} parties\n• Synced ${res.counts?.arrivals || 0} arrivals\n• Synced ${res.counts?.dispatches || 0} dispatches`);
+        if (onDataChanged) onDataChanged();
+      } else {
+        alert('Push failed: ' + (res?.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Failed to push to MongoDB: ' + err.message);
+    } finally {
+      setSyncing(false);
+      setSyncType(null);
+    }
+  };
+
+  const handlePullFromMongo = async (e) => {
+    e.stopPropagation();
+    if (!dbStatus.isMongoConnected) {
+      alert('MongoDB is not connected. Open Settings to connect.');
+      return;
+    }
+    if (!window.confirm('Pull latest data from MongoDB cloud to this device?\n\nThis will refresh your local database with records entered from your other devices.')) {
+      return;
+    }
+    setSyncing(true);
+    setSyncType('pull');
+    try {
+      const res = await dbAction('db:pull-from-mongo');
+      if (res && res.success) {
+        alert(`📥 Pull Complete!\n\n${res.message}\n• Loaded ${res.counts?.suppliers || 0} parties\n• Loaded ${res.counts?.arrivals || 0} arrivals\n• Loaded ${res.counts?.dispatches || 0} dispatches`);
+        if (onDataChanged) onDataChanged();
+      } else {
+        alert('Pull failed: ' + (res?.message || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Failed to pull from MongoDB: ' + err.message);
+    } finally {
+      setSyncing(false);
+      setSyncType(null);
+    }
+  };
 
   const checkStatus = async () => {
     try {
@@ -135,6 +190,60 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onO
           </div>
           <div className={`status-dot ${dbStatus.isMongoConnected ? 'online' : 'offline'}`} />
         </div>
+
+        {dbStatus.isMongoConnected && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginBottom: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                padding: '0.35rem 0.2rem',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                background: 'rgba(37, 99, 235, 0.25)',
+                color: '#93c5fd',
+                border: '1px solid rgba(59, 130, 246, 0.5)',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.25rem',
+                cursor: syncing ? 'wait' : 'pointer'
+              }}
+              onClick={handlePushToMongo}
+              disabled={syncing}
+              title="Push & upload local data from this device to MongoDB cloud"
+            >
+              <UploadCloud size={12} className={syncType === 'push' ? 'animate-spin' : ''} />
+              <span>{syncType === 'push' ? 'Pushing...' : 'Push to Cloud'}</span>
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                padding: '0.35rem 0.2rem',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                background: 'rgba(16, 185, 129, 0.25)',
+                color: '#6ee7b7',
+                border: '1px solid rgba(16, 185, 129, 0.5)',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.25rem',
+                cursor: syncing ? 'wait' : 'pointer'
+              }}
+              onClick={handlePullFromMongo}
+              disabled={syncing}
+              title="Pull latest data from MongoDB cloud down to this device"
+            >
+              <DownloadCloud size={12} className={syncType === 'pull' ? 'animate-spin' : ''} />
+              <span>{syncType === 'pull' ? 'Pulling...' : 'Pull to Local'}</span>
+            </button>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
           <button 
