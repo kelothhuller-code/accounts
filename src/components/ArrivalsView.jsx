@@ -428,8 +428,8 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
                 <th className="num">Rate</th>
                 <th>Status</th>
                 <th className="num">Gross Bill</th>
-                <th className="num">TCS (+)</th>
                 <th className="num">TDS (-)</th>
+                <th className="num">TCS (-)</th>
                 <th className="num">Net Bill</th>
                 <th>Actions</th>
               </tr>
@@ -446,7 +446,20 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
               ) : (
                 filteredArrivals
                   .slice((currentPage - 1) * pageSize, currentPage * pageSize)
-                  .map(a => (
+                  .map(a => {
+                    const gross = Number(a.billAmount) || Number(a.taxableAmount) || 0;
+                    const tds = Number(a.tdsAmount) || 0;
+                    const tcs = Number(a.tcsAmount) || 0;
+                    const totalTax = tds + tcs;
+                    let net = Number(a.netAmount);
+                    if (totalTax > 0) {
+                      if (!net || isNaN(net) || net >= gross) {
+                        net = Math.max(0, Math.round((gross - totalTax) * 100) / 100);
+                      }
+                    } else {
+                      net = net || gross;
+                    }
+                    return (
                     <tr key={a.id}>
                       <td style={{ fontWeight: 600 }}>{a.arrivalNo}</td>
                       <td>{a.date}</td>
@@ -493,15 +506,15 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
                           {a.status === 'storage' ? `📦 Storage (${a.remainingBags}b)` : a.status}
                         </span>
                       </td>
-                      <td className="num">{a.status === 'storage' ? '-' : `₹${(Number(a.billAmount) || Number(a.taxableAmount) || 0).toLocaleString()}`}</td>
-                      <td className="num" style={{ color: Number(a.tcsAmount) > 0 ? '#059669' : '#94a3b8' }}>
-                        {a.status === 'storage' ? '-' : (Number(a.tcsAmount) > 0 ? `+₹${(a.tcsAmount || 0).toLocaleString()}` : '-')}
+                      <td className="num">{a.status === 'storage' ? '-' : `₹${gross.toLocaleString()}`}</td>
+                      <td className="num" style={{ color: tds > 0 ? '#dc2626' : '#94a3b8' }}>
+                        {a.status === 'storage' ? '-' : (tds > 0 ? `-₹${tds.toLocaleString()}` : '-')}
                       </td>
-                      <td className="num" style={{ color: Number(a.tdsAmount) > 0 ? '#dc2626' : '#94a3b8' }}>
-                        {a.status === 'storage' ? '-' : (Number(a.tdsAmount) > 0 ? `-₹${(a.tdsAmount || 0).toLocaleString()}` : '-')}
+                      <td className="num" style={{ color: tcs > 0 ? '#dc2626' : '#94a3b8' }}>
+                        {a.status === 'storage' ? '-' : (tcs > 0 ? `-₹${tcs.toLocaleString()}` : '-')}
                       </td>
                       <td className="num" style={{ fontWeight: 700, color: a.status === 'storage' ? '#64748b' : '#059669' }}>
-                        {a.status === 'storage' ? '-' : `₹${(Number(a.netAmount) || (Number(a.billAmount) || 0) + (Number(a.tcsAmount) || 0) - (Number(a.tdsAmount) || 0)).toLocaleString()}`}
+                        {a.status === 'storage' ? '-' : `₹${net.toLocaleString()}`}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
@@ -534,7 +547,8 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
                         </div>
                       </td>
                     </tr>
-                  ))
+                  );
+                })
               )}
             </tbody>
           </table>

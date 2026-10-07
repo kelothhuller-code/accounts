@@ -61,14 +61,18 @@ function getEffectiveArrivalNetAmount(arr) {
   const sgst = Number(arr.sgstAmount) || 0;
   const igst = Number(arr.igstAmount) || 0;
   const billBase = Number(arr.billAmount) || (taxable + cgst + sgst + igst);
-  const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
   const tds = Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
+  const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+  const totalTax = tds + tcs;
 
   let net = Number(arr.netAmount);
-  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
-    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  if (totalTax > 0) {
+    if (!net || isNaN(net) || net >= billBase) {
+      return Math.round((billBase - totalTax) * 100) / 100;
+    }
+    return net;
   }
-  return net;
+  return net || billBase;
 }
 
 function getEffectiveDispatchNetAmount(disp) {
@@ -80,12 +84,16 @@ function getEffectiveDispatchNetAmount(disp) {
   const billBase = Number(disp.billAmount) || (taxable + cgst + sgst + igst);
   const tcs = Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
   const tds = Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
+  const totalTax = tcs + tds;
 
   let net = Number(disp.netAmount);
-  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
-    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  if (totalTax > 0) {
+    if (!net || isNaN(net) || net >= billBase) {
+      return Math.round((billBase - totalTax) * 100) / 100;
+    }
+    return net;
   }
-  return net;
+  return net || billBase;
 }
 
 function getEffectiveSettlementNetAmount(set) {
@@ -94,14 +102,19 @@ function getEffectiveSettlementNetAmount(set) {
   const cgst = Number(set.cgstAmount) || 0;
   const sgst = Number(set.sgstAmount) || 0;
   const igst = Number(set.igstAmount) || 0;
-  const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+  const billBase = gross + cgst + sgst + igst;
   const tds = Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
+  const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+  const totalTax = tds + tcs;
 
   let net = Number(set.settlementNetAmount);
-  if (!net || isNaN(net) || (Math.abs(net - gross) < 0.01 && (tcs > 0 || tds > 0 || cgst > 0 || sgst > 0 || igst > 0))) {
-    net = Math.round((gross + cgst + sgst + igst + tcs - tds) * 100) / 100;
+  if (totalTax > 0) {
+    if (!net || isNaN(net) || net >= billBase) {
+      return Math.round((billBase - totalTax) * 100) / 100;
+    }
+    return net;
   }
-  return net;
+  return net || billBase;
 }
 
 function mockBrowserFallback(action, payload) {

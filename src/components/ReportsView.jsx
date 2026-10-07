@@ -1560,7 +1560,16 @@ export default function ReportsView({ dataVersion = 0, triggerExport = 0, onOpen
         const isSales = isSalesSettlement(s);
         const isSec = isSecondaryItem(s);
         const gross = Number(s.settlementGrossAmount) || (Number(s.settledEndProduct) * Number(s.settlementRate)) || 0;
-        const net = Number(s.settlementNetAmount) || gross;
+        const totalTax = (Number(s.tdsAmount) || 0) + (Number(s.tcsAmount) || 0);
+        const gst = (Number(s.cgstAmount) || 0) + (Number(s.sgstAmount) || 0) + (Number(s.igstAmount) || 0);
+        let net = Number(s.settlementNetAmount);
+        if (totalTax > 0) {
+          if (!net || isNaN(net) || net >= (gross + gst)) {
+            net = Math.max(0, Math.round(((gross + gst) - totalTax) * 100) / 100);
+          }
+        } else {
+          net = net || (gross + gst);
+        }
         const sup = suppliers.find(sp => sp.id === s.supplierId || sp.name === s.supplierName) || {};
 
         return (
@@ -1677,9 +1686,9 @@ export default function ReportsView({ dataVersion = 0, triggerExport = 0, onOpen
                     )}
 
                     {Number(s.tcsAmount) > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#16a34a' }}>
-                        <span>(+) TCS Collected:</span>
-                        <span style={{ fontWeight: 700 }}>+₹{(Number(s.tcsAmount) || 0).toLocaleString('en-IN')}</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#dc2626' }}>
+                        <span>(-) TCS Deducted:</span>
+                        <span style={{ fontWeight: 700 }}>-₹{(Number(s.tcsAmount) || 0).toLocaleString('en-IN')}</span>
                       </div>
                     )}
 

@@ -543,8 +543,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               <th class="num">End Product (kg)</th>
               <th>Status / Remarks</th>
               <th class="num">Gross Bill</th>
-              <th class="num">TCS (+)</th>
               <th class="num">TDS (-)</th>
+              <th class="num">TCS (-)</th>
               <th class="num">Net Bill</th>
             </tr>
           </thead>
@@ -553,9 +553,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               const gross = Number(a.billAmount) || Number(a.taxableAmount) || 0;
               const tcs = Number(a.tcsAmount) || 0;
               const tds = Number(a.tdsAmount) || 0;
+              const totalTax = tds + tcs;
               let net = Number(a.netAmount);
-              if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-                net = gross + tcs - tds;
+              if (totalTax > 0) {
+                if (!net || isNaN(net) || net >= gross) {
+                  net = Math.round((gross - totalTax) * 100) / 100;
+                }
+              } else {
+                net = net || gross;
               }
               return `
               <tr>
@@ -569,8 +574,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 <td class="num"><strong>${a.endProductWeight ? a.endProductWeight.toLocaleString() : '-'}</strong></td>
                 <td>${a.remarks || a.status}</td>
                 <td class="num">${a.status === 'storage' ? 'Unfixed' : `₹${gross.toLocaleString('en-IN')}`}</td>
-                <td class="num" style="color: #059669;">${tcs > 0 ? `+₹${tcs.toLocaleString('en-IN')}` : '-'}</td>
                 <td class="num" style="color: #dc2626;">${tds > 0 ? `-₹${tds.toLocaleString('en-IN')}` : '-'}</td>
+                <td class="num" style="color: #dc2626;">${tcs > 0 ? `-₹${tcs.toLocaleString('en-IN')}` : '-'}</td>
                 <td class="num"><strong>${a.status === 'storage' ? 'Unfixed' : `₹${net.toLocaleString('en-IN')}`}</strong></td>
               </tr>
             `;}).join('')}
@@ -591,7 +596,7 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               <th class="num">End Product (kg)</th>
               <th>Type / Remarks</th>
               <th class="num">Gross Bill</th>
-              <th class="num">TCS (+)</th>
+              <th class="num">TCS (-)</th>
               <th class="num">TDS (-)</th>
               <th class="num">Net Bill</th>
             </tr>
@@ -601,9 +606,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               const gross = Number(d.billAmount) || Number(d.taxableAmount) || 0;
               const tcs = Number(d.tcsAmount) || 0;
               const tds = Number(d.tdsAmount) || 0;
+              const totalTax = tcs + tds;
               let net = Number(d.netAmount);
-              if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-                net = gross + tcs - tds;
+              if (totalTax > 0) {
+                if (!net || isNaN(net) || net >= gross) {
+                  net = Math.round((gross - totalTax) * 100) / 100;
+                }
+              } else {
+                net = net || gross;
               }
               return `
               <tr>
@@ -616,7 +626,7 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 <td class="num"><strong>${d.endProductWeight ? d.endProductWeight.toLocaleString() : '-'}</strong></td>
                 <td>${d.remarks || d.dispatchType || d.status}</td>
                 <td class="num">${d.status === 'storage_out' ? 'Unbilled' : `₹${gross.toLocaleString('en-IN')}`}</td>
-                <td class="num" style="color: #059669;">${tcs > 0 ? `+₹${tcs.toLocaleString('en-IN')}` : '-'}</td>
+                <td class="num" style="color: #dc2626;">${tcs > 0 ? `-₹${tcs.toLocaleString('en-IN')}` : '-'}</td>
                 <td class="num" style="color: #dc2626;">${tds > 0 ? `-₹${tds.toLocaleString('en-IN')}` : '-'}</td>
                 <td class="num"><strong>${d.status === 'storage_out' ? 'Unbilled' : `₹${net.toLocaleString('en-IN')}`}</strong></td>
               </tr>
@@ -636,8 +646,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               <th class="num">Settled EP (kg)</th>
               <th class="num">Settlement Rate</th>
               <th class="num">Gross Bill</th>
-              <th class="num">TCS (+)</th>
               <th class="num">TDS (-)</th>
+              <th class="num">TCS (-)</th>
               <th class="num">Net Settlement Bill</th>
             </tr>
           </thead>
@@ -646,9 +656,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               const gross = Number(st.settlementGrossAmount) || 0;
               const tcs = Number(st.tcsAmount) || 0;
               const tds = Number(st.tdsAmount) || 0;
+              const totalTax = tds + tcs;
               let net = Number(st.settlementNetAmount);
-              if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-                net = gross + tcs - tds;
+              if (totalTax > 0) {
+                if (!net || isNaN(net) || net >= gross) {
+                  net = Math.round((gross - totalTax) * 100) / 100;
+                }
+              } else {
+                net = net || gross;
               }
               return `
               <tr>
@@ -659,8 +674,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 <td class="num">${(st.settledEndProduct || 0).toLocaleString()} kg</td>
                 <td class="num">₹${st.settlementRate}/${st.rateUnit === 'per_bag' ? 'Bag' : 'Kg EP'}</td>
                 <td class="num">₹${gross.toLocaleString('en-IN')}</td>
-                <td class="num" style="color: #059669;">${tcs > 0 ? `+₹${tcs.toLocaleString('en-IN')}` : '-'}</td>
                 <td class="num" style="color: #dc2626;">${tds > 0 ? `-₹${tds.toLocaleString('en-IN')}` : '-'}</td>
+                <td class="num" style="color: #dc2626;">${tcs > 0 ? `-₹${tcs.toLocaleString('en-IN')}` : '-'}</td>
                 <td class="num"><strong>₹${net.toLocaleString('en-IN')}</strong></td>
               </tr>
             `;}).join('')}
@@ -743,9 +758,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
         const gross = Number(arr.billAmount) || Number(arr.taxableAmount) || 0;
         const tcs = Number(arr.tcsAmount) || 0;
         const tds = Number(arr.tdsAmount) || 0;
+        const totalTax = tds + tcs;
         let net = Number(arr.netAmount);
-        if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-          net = gross + tcs - tds;
+        if (totalTax > 0) {
+          if (!net || isNaN(net) || net >= gross) {
+            net = Math.round((gross - totalTax) * 100) / 100;
+          }
+        } else {
+          net = net || gross;
         }
 
         events.push({
@@ -773,9 +793,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
       const gstSum = (Number(disp.cgstAmount) || 0) + (Number(disp.sgstAmount) || 0) + (Number(disp.igstAmount) || 0);
       const tds = Number(disp.tdsAmount) || 0;
       const tcs = Number(disp.tcsAmount) || 0;
+      const totalTax = tcs + tds;
       let net = Number(disp.netAmount);
-      if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-        net = gross + tcs - tds;
+      if (totalTax > 0) {
+        if (!net || isNaN(net) || net >= gross) {
+          net = Math.round((gross - totalTax) * 100) / 100;
+        }
+      } else {
+        net = net || gross;
       }
       const noteParts = [];
       if (gstSum > 0) noteParts.push(`GST: ₹${gstSum.toLocaleString()}`);
@@ -809,11 +834,17 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
       const cgst = Number(set.cgstAmount) || 0;
       const sgst = Number(set.sgstAmount) || 0;
       const igst = Number(set.igstAmount) || 0;
+      const billBase = gross + cgst + sgst + igst;
       const tcs = Number(set.tcsAmount) || 0;
       const tds = Number(set.tdsAmount) || 0;
+      const totalTax = tds + tcs;
       let net = Number(set.settlementNetAmount);
-      if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-        net = gross + cgst + sgst + igst + tcs - tds;
+      if (totalTax > 0) {
+        if (!net || isNaN(net) || net >= billBase) {
+          net = Math.round((billBase - totalTax) * 100) / 100;
+        }
+      } else {
+        net = net || billBase;
       }
       const setWeight = set.settledWeight || (set.averageOutturn ? Math.round((set.settledEndProduct / (set.averageOutturn / 50))) : Math.round(set.settledBags * 50));
       const noteParts = [`Avg OT: ${set.averageOutturn} @ ₹${set.settlementRate}`];
@@ -1233,14 +1264,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 </div>
                 {(Number(s.totalTcsDeducted) > 0 || Number(s.totalTdsDeducted) > 0) && (
                   <div style={{ fontSize: '0.72rem', marginTop: '0.25rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                    {Number(s.totalTcsDeducted) > 0 && (
-                      <span style={{ color: '#059669', fontWeight: 600, background: '#ffffff', padding: '0.05rem 0.35rem', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
-                        TCS (+): +₹{s.totalTcsDeducted.toLocaleString()}
-                      </span>
-                    )}
                     {Number(s.totalTdsDeducted) > 0 && (
                       <span style={{ color: '#dc2626', fontWeight: 600, background: '#ffffff', padding: '0.05rem 0.35rem', borderRadius: '4px', border: '1px solid #fecaca' }}>
                         TDS (-): -₹{s.totalTdsDeducted.toLocaleString()}
+                      </span>
+                    )}
+                    {Number(s.totalTcsDeducted) > 0 && (
+                      <span style={{ color: '#dc2626', fontWeight: 600, background: '#ffffff', padding: '0.05rem 0.35rem', borderRadius: '4px', border: '1px solid #fecaca' }}>
+                        TCS (-): -₹{s.totalTcsDeducted.toLocaleString()}
                       </span>
                     )}
                   </div>
@@ -1460,14 +1491,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                               <td>
                                 <div style={{ fontWeight: 600 }}>{tx.product}</div>
                                 <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', gap: '0.35rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.1rem' }}>
-                                  {tx.tcsAmount > 0 && (
-                                    <span style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', padding: '0.05rem 0.35rem', borderRadius: '4px', fontWeight: 700, fontSize: '0.7rem' }}>
-                                      TCS: +₹{tx.tcsAmount.toLocaleString()}
-                                    </span>
-                                  )}
                                   {tx.tdsAmount > 0 && (
                                     <span style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '0.05rem 0.35rem', borderRadius: '4px', fontWeight: 700, fontSize: '0.7rem' }}>
                                       TDS: -₹{tx.tdsAmount.toLocaleString()}
+                                    </span>
+                                  )}
+                                  {tx.tcsAmount > 0 && (
+                                    <span style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', padding: '0.05rem 0.35rem', borderRadius: '4px', fontWeight: 700, fontSize: '0.7rem' }}>
+                                      TCS: -₹{tx.tcsAmount.toLocaleString()}
                                     </span>
                                   )}
                                   {tx.notes && <span>{tx.notes}</span>}
@@ -1555,8 +1586,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                         <th className="num">End Product (kg)</th>
                         <th>Status</th>
                         <th className="num">Gross Bill</th>
-                        <th className="num">TCS (+)</th>
                         <th className="num">TDS (-)</th>
+                        <th className="num">TCS (-)</th>
                         <th className="num">Net Bill</th>
                         <th>Actions</th>
                       </tr>
@@ -1570,11 +1601,16 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                           .map(a => {
                             const isSec = isSecItem(a);
                             const gross = Number(a.billAmount) || Number(a.taxableAmount) || 0;
-                            const tcs = Number(a.tcsAmount) || 0;
                             const tds = Number(a.tdsAmount) || 0;
+                            const tcs = Number(a.tcsAmount) || 0;
+                            const totalTax = tds + tcs;
                             let net = Number(a.netAmount);
-                            if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-                              net = gross + tcs - tds;
+                            if (totalTax > 0) {
+                              if (!net || isNaN(net) || net >= gross) {
+                                net = Math.max(0, Math.round((gross - totalTax) * 100) / 100);
+                              }
+                            } else {
+                              net = net || gross;
                             }
                             return (
                               <tr key={a.id}>
@@ -1602,11 +1638,11 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                                   </span>
                                 </td>
                                 <td className="num">{a.status === 'storage' ? 'Unfixed' : `₹${gross.toLocaleString()}`}</td>
-                                <td className="num" style={{ color: tcs > 0 ? '#059669' : '#94a3b8' }}>
-                                  {tcs > 0 ? `+₹${tcs.toLocaleString()}` : '-'}
-                                </td>
                                 <td className="num" style={{ color: tds > 0 ? '#dc2626' : '#94a3b8' }}>
                                   {tds > 0 ? `-₹${tds.toLocaleString()}` : '-'}
+                                </td>
+                                <td className="num" style={{ color: tcs > 0 ? '#dc2626' : '#94a3b8' }}>
+                                  {tcs > 0 ? `-₹${tcs.toLocaleString()}` : '-'}
                                 </td>
                                 <td className="num" style={{ fontWeight: 600, color: a.status === 'storage' ? '#64748b' : '#059669' }}>
                                   {a.status === 'storage' ? 'Unfixed' : `₹${net.toLocaleString()}`}
@@ -1657,7 +1693,7 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                         <th className="num">End Product (kg)</th>
                         <th>Type / Status</th>
                         <th className="num">Gross Bill</th>
-                        <th className="num">TCS (+)</th>
+                        <th className="num">TCS (-)</th>
                         <th className="num">TDS (-)</th>
                         <th className="num">Net Bill</th>
                         <th>Actions</th>
@@ -1679,9 +1715,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                             const gross = Number(d.billAmount) || Number(d.taxableAmount) || 0;
                             const tcs = Number(d.tcsAmount) || 0;
                             const tds = Number(d.tdsAmount) || 0;
+                            const totalTax = tcs + tds;
                             let net = Number(d.netAmount);
-                            if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-                              net = gross + tcs - tds;
+                            if (totalTax > 0) {
+                              if (!net || isNaN(net) || net >= gross) {
+                                net = Math.max(0, Math.round((gross - totalTax) * 100) / 100);
+                              }
+                            } else {
+                              net = net || gross;
                             }
                             return (
                               <tr key={d.id}>
@@ -1710,8 +1751,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                                   </span>
                                 </td>
                                 <td className="num">{isStorageOut ? 'Unbilled' : `₹${gross.toLocaleString()}`}</td>
-                                <td className="num" style={{ color: tcs > 0 ? '#059669' : '#94a3b8' }}>
-                                  {tcs > 0 ? `+₹${tcs.toLocaleString()}` : '-'}
+                                <td className="num" style={{ color: tcs > 0 ? '#dc2626' : '#94a3b8' }}>
+                                  {tcs > 0 ? `-₹${tcs.toLocaleString()}` : '-'}
                                 </td>
                                 <td className="num" style={{ color: tds > 0 ? '#dc2626' : '#94a3b8' }}>
                                   {tds > 0 ? `-₹${tds.toLocaleString()}` : '-'}
@@ -1800,8 +1841,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                           <th className="num">Settled EP (kg)</th>
                           <th className="num">Rate</th>
                           <th className="num">Gross Bill</th>
-                          <th className="num">TCS (+)</th>
                           <th className="num">TDS (-)</th>
+                          <th className="num">TCS (-)</th>
                           <th className="num">Net Settlement Bill</th>
                           <th>Actions</th>
                         </tr>
@@ -1815,11 +1856,18 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                             .map(st => {
                               const isSales = st.settlementCategory === 'sales_storage';
                               const gross = Number(st.settlementGrossAmount) || 0;
-                              const tcs = Number(st.tcsAmount) || 0;
+                              const gst = (Number(st.cgstAmount) || 0) + (Number(st.sgstAmount) || 0) + (Number(st.igstAmount) || 0);
+                              const billBase = gross + gst;
                               const tds = Number(st.tdsAmount) || 0;
+                              const tcs = Number(st.tcsAmount) || 0;
+                              const totalTax = tds + tcs;
                               let net = Number(st.settlementNetAmount);
-                              if (!net || (tcs > 0 && Math.abs(net - gross) < 0.01)) {
-                                net = gross + (Number(st.cgstAmount) || 0) + (Number(st.sgstAmount) || 0) + (Number(st.igstAmount) || 0) + tcs - tds;
+                              if (totalTax > 0) {
+                                if (!net || isNaN(net) || net >= billBase) {
+                                  net = Math.max(0, Math.round((billBase - totalTax) * 100) / 100);
+                                }
+                              } else {
+                                net = net || billBase;
                               }
                               const stWeight = st.settledWeight || (st.averageOutturn ? Math.round((st.settledEndProduct / (st.averageOutturn / 50))) : Math.round(st.settledBags * 50));
                               return (
@@ -1837,11 +1885,11 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                                   <td className="num" style={{ fontWeight: 600 }}>{typeof st.settledEndProduct === 'number' ? st.settledEndProduct.toLocaleString() : st.settledEndProduct} kg</td>
                                   <td className="num">₹{st.settlementRate}/{st.rateUnit === 'per_bag' ? 'Bag' : 'Kg EP'}</td>
                                   <td className="num">₹{gross.toLocaleString()}</td>
-                                  <td className="num" style={{ color: tcs > 0 ? '#059669' : '#94a3b8' }}>
-                                    {tcs > 0 ? `+₹${tcs.toLocaleString()}` : '-'}
-                                  </td>
                                   <td className="num" style={{ color: tds > 0 ? '#dc2626' : '#94a3b8' }}>
                                     {tds > 0 ? `-₹${tds.toLocaleString()}` : '-'}
+                                  </td>
+                                  <td className="num" style={{ color: tcs > 0 ? '#dc2626' : '#94a3b8' }}>
+                                    {tcs > 0 ? `-₹${tcs.toLocaleString()}` : '-'}
                                   </td>
                                   <td className="num" style={{ fontWeight: 700, color: isSales ? '#2563eb' : '#059669' }}>
                                     ₹{net.toLocaleString()} <small>({isSales ? 'Debit' : 'Credit'})</small>

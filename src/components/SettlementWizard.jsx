@@ -46,10 +46,20 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   const [rateUnit, setRateUnit] = useState('per_kg_ep'); // 'per_kg_ep', 'per_bag', 'per_kg_raw'
 
   // Taxes & Adjustments
-  const [tcsRate, setTcsRate] = useState('0.1');
-  const [tdsRate, setTdsRate] = useState('0');
+  const [tcsRate, setTcsRate] = useState(settlementCategory === 'sales_storage' ? '0.1' : '0');
+  const [tdsRate, setTdsRate] = useState(settlementCategory === 'sales_storage' ? '0' : '0.1');
   const [cgstRate, setCgstRate] = useState('0');
   const [sgstRate, setSgstRate] = useState('0');
+
+  useEffect(() => {
+    if (settlementCategory === 'sales_storage') {
+      setTcsRate('0.1');
+      setTdsRate('0');
+    } else {
+      setTdsRate('0.1');
+      setTcsRate('0');
+    }
+  }, [settlementCategory]);
 
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
@@ -274,7 +284,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
   const sgstAmount = Math.round((grossSettlementAmount * (numSgstRate / 100)) * 100) / 100;
   const tcsAmount = Math.round((grossSettlementAmount * (numTcsRate / 100)) * 100) / 100;
   const tdsAmount = Math.round((grossSettlementAmount * (numTdsRate / 100)) * 100) / 100;
-  const netSettlementAmount = Math.round((grossSettlementAmount + cgstAmount + sgstAmount - tdsAmount + tcsAmount) * 100) / 100;
+  const netSettlementAmount = Math.round((grossSettlementAmount + cgstAmount + sgstAmount - tdsAmount - tcsAmount) * 100) / 100;
 
   const handleExecuteSettlement = async (e) => {
     if (e) e.preventDefault();
@@ -889,29 +899,57 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
 
                 {/* Taxes & Deductions */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem', background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label" style={{ fontSize: '0.75rem' }}>TCS Rate (%)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="form-control"
-                      value={tcsRate}
-                      onChange={e => setTcsRate(e.target.value)}
-                    />
-                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0.1%</span>
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label" style={{ fontSize: '0.75rem' }}>TDS Rate (%)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="form-control"
-                      value={tdsRate}
-                      onChange={e => setTdsRate(e.target.value)}
-                    />
-                    <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0%</span>
-                  </div>
+                  {settlementCategory === 'sales_storage' ? (
+                    <>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem' }}>TCS Rate (%) [Deduction]</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
+                        />
+                        <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0.1%</span>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem' }}>TDS Rate (%) [Deduction]</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control"
+                          value={tdsRate}
+                          onChange={e => setTdsRate(e.target.value)}
+                        />
+                        <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0%</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem' }}>TDS Rate (%) (u/s 194Q) [-]</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control"
+                          value={tdsRate}
+                          onChange={e => setTdsRate(e.target.value)}
+                        />
+                        <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0.1%</span>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.75rem' }}>TCS Rate (%) [-]</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
+                        />
+                        <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Default 0%</span>
+                      </div>
+                    </>
+                  )}
 
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label" style={{ fontSize: '0.75rem' }}>CGST Rate (%)</label>
@@ -980,8 +1018,8 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       <span>Gross: ₹{grossSettlementAmount.toLocaleString('en-IN')}</span>
-                      {tcsAmount > 0 && <span style={{ color: '#38bdf8', fontWeight: 600 }}>TCS (+{numTcsRate}%): +₹{tcsAmount.toLocaleString('en-IN')}</span>}
                       {tdsAmount > 0 && <span style={{ color: '#f87171', fontWeight: 600 }}>TDS (-{numTdsRate}%): -₹{tdsAmount.toLocaleString('en-IN')}</span>}
+                      {tcsAmount > 0 && <span style={{ color: '#f87171', fontWeight: 600 }}>TCS (-{numTcsRate}%): -₹{tcsAmount.toLocaleString('en-IN')}</span>}
                     </div>
                     <div style={{ fontSize: '1.65rem', fontWeight: 800, color: '#38bdf8', marginTop: '0.15rem' }}>
                       ₹{netSettlementAmount.toLocaleString('en-IN')}

@@ -652,7 +652,7 @@ export default function DispatchesView({
                 <th className="num">Clean EP (kg)</th>
                 <th className="num">Sale Rate</th>
                 <th className="num">GST / Tax</th>
-                <th className="num">TCS (+)</th>
+                <th className="num">TCS (-)</th>
                 <th className="num">TDS (-)</th>
                 <th>Status / Mode</th>
                 <th className="num">Net Invoice Amount</th>
@@ -677,6 +677,18 @@ export default function DispatchesView({
                   const isStoreOut = d.status === 'storage_out' || d.rateType === 'storage_out';
                   const gstSum =
                     (Number(d.cgstAmount) || 0) + (Number(d.sgstAmount) || 0) + (Number(d.igstAmount) || 0);
+                  const gross = Number(d.billAmount) || Number(d.taxableAmount) || 0;
+                  const tcs = Number(d.tcsAmount) || 0;
+                  const tds = Number(d.tdsAmount) || 0;
+                  const totalTax = tcs + tds;
+                  let net = Number(d.netAmount);
+                  if (totalTax > 0) {
+                    if (!net || isNaN(net) || net >= gross) {
+                      net = Math.max(0, Math.round((gross - totalTax) * 100) / 100);
+                    }
+                  } else {
+                    net = net || gross;
+                  }
 
                   return (
                     <tr key={d.id}>
@@ -731,18 +743,18 @@ export default function DispatchesView({
                         )}
                       </td>
                       <td className="num">
-                        {Number(d.tcsAmount) > 0 ? (
-                          <span style={{ color: '#0369a1', fontSize: '0.82rem', fontWeight: 600 }}>
-                            +₹{(Number(d.tcsAmount) || 0).toLocaleString()}
+                        {tcs > 0 ? (
+                          <span style={{ color: '#dc2626', fontSize: '0.82rem', fontWeight: 600 }}>
+                            -₹{tcs.toLocaleString()}
                           </span>
                         ) : (
                           <span style={{ color: '#94a3b8' }}>-</span>
                         )}
                       </td>
                       <td className="num">
-                        {Number(d.tdsAmount) > 0 ? (
+                        {tds > 0 ? (
                           <span style={{ color: '#dc2626', fontSize: '0.82rem', fontWeight: 600 }}>
-                            -₹{(Number(d.tdsAmount) || 0).toLocaleString()}
+                            -₹{tds.toLocaleString()}
                           </span>
                         ) : (
                           <span style={{ color: '#94a3b8' }}>-</span>
@@ -767,7 +779,7 @@ export default function DispatchesView({
                           color: isStoreOut ? '#64748b' : '#059669',
                         }}
                       >
-                        {isStoreOut ? 'Store Out' : `₹${(Number(d.netAmount) || (Number(d.billAmount) || 0) + (Number(d.tcsAmount) || 0) - (Number(d.tdsAmount) || 0)).toLocaleString()}`}
+                        {isStoreOut ? 'Store Out' : `₹${net.toLocaleString()}`}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>

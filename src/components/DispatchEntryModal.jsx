@@ -240,7 +240,7 @@ export default function DispatchEntryModal({
   
   const calcTdsAmount = Math.round((calcTaxable * (numTds / 100)) * 100) / 100;
   const calcTcsAmount = Math.round((calcTaxable * (numTcs / 100)) * 100) / 100;
-  const calcNetAmount = Math.round((calcBillGross - calcTdsAmount + calcTcsAmount) * 100) / 100;
+  const calcNetAmount = Math.round((calcBillGross - calcTdsAmount - calcTcsAmount) * 100) / 100;
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -759,8 +759,8 @@ export default function DispatchEntryModal({
                     <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: '#38bdf8' }}>+₹{calcGstTotal.toLocaleString()}</strong>
                   </div>
                   <div>
-                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (+): </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#fbbf24' }}>+₹{calcTcsAmount.toLocaleString()}</strong>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (-): </span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#f87171' }}>-₹{calcTcsAmount.toLocaleString()}</strong>
                   </div>
                   <div>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TDS (-): </span>

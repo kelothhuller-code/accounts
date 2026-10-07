@@ -194,7 +194,7 @@ function getCanonicalName(rawName) {
   return result;
 }
 
-// Calculate effective net bill for an arrival (purchase bill) factoring in TCS and TDS
+// Calculate effective net bill for an arrival (purchase bill) factoring in TDS and TCS deduction
 function getEffectiveArrivalNetAmount(arr) {
   if (!arr) return 0;
   const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * Number(arr.rate)) || 0;
@@ -202,17 +202,22 @@ function getEffectiveArrivalNetAmount(arr) {
   const sgst = Number(arr.sgstAmount) || 0;
   const igst = Number(arr.igstAmount) || 0;
   const billBase = Number(arr.billAmount) || (taxable + cgst + sgst + igst);
-  const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
   const tds = Number(arr.tdsAmount) || (arr.tdsRate ? Math.round((taxable * (Number(arr.tdsRate) / 100)) * 100) / 100 : 0);
+  const tcs = Number(arr.tcsAmount) || (arr.tcsRate ? Math.round((taxable * (Number(arr.tcsRate) / 100)) * 100) / 100 : 0);
+  const totalTax = tds + tcs;
 
   let net = Number(arr.netAmount);
-  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
-    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  // If net is missing or was computed with addition (net >= billBase), deduct tax from net payable
+  if (totalTax > 0) {
+    if (!net || isNaN(net) || net >= billBase) {
+      return Math.round((billBase - totalTax) * 100) / 100;
+    }
+    return net;
   }
-  return net;
+  return net || billBase;
 }
 
-// Calculate effective net invoice for a dispatch (sale invoice) factoring in TCS and TDS
+// Calculate effective net invoice for a dispatch (sale invoice) factoring in TCS and TDS deduction
 function getEffectiveDispatchNetAmount(disp) {
   if (!disp) return 0;
   const taxable = Number(disp.taxableAmount) || (Number(disp.weight) * Number(disp.rate)) || 0;
@@ -222,29 +227,40 @@ function getEffectiveDispatchNetAmount(disp) {
   const billBase = Number(disp.billAmount) || (taxable + cgst + sgst + igst);
   const tcs = Number(disp.tcsAmount) || (disp.tcsRate ? Math.round((taxable * (Number(disp.tcsRate) / 100)) * 100) / 100 : 0);
   const tds = Number(disp.tdsAmount) || (disp.tdsRate ? Math.round((taxable * (Number(disp.tdsRate) / 100)) * 100) / 100 : 0);
+  const totalTax = tcs + tds;
 
   let net = Number(disp.netAmount);
-  if (!net || isNaN(net) || (Math.abs(net - billBase) < 0.01 && (tcs > 0 || tds > 0))) {
-    net = Math.round((billBase + tcs - tds) * 100) / 100;
+  // If net is missing or was computed with addition (net >= billBase), deduct tax from net receivable
+  if (totalTax > 0) {
+    if (!net || isNaN(net) || net >= billBase) {
+      return Math.round((billBase - totalTax) * 100) / 100;
+    }
+    return net;
   }
-  return net;
+  return net || billBase;
 }
 
-// Calculate effective net bill for a settlement factoring in TCS and TDS
+// Calculate effective net bill for a settlement factoring in TDS and TCS deduction
 function getEffectiveSettlementNetAmount(set) {
   if (!set) return 0;
   const gross = Number(set.settlementGrossAmount) || 0;
   const cgst = Number(set.cgstAmount) || 0;
   const sgst = Number(set.sgstAmount) || 0;
   const igst = Number(set.igstAmount) || 0;
-  const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+  const billBase = gross + cgst + sgst + igst;
   const tds = Number(set.tdsAmount) || (set.tdsRate ? Math.round((gross * (Number(set.tdsRate) / 100)) * 100) / 100 : 0);
+  const tcs = Number(set.tcsAmount) || (set.tcsRate ? Math.round((gross * (Number(set.tcsRate) / 100)) * 100) / 100 : 0);
+  const totalTax = tds + tcs;
 
   let net = Number(set.settlementNetAmount);
-  if (!net || isNaN(net) || (Math.abs(net - gross) < 0.01 && (tcs > 0 || tds > 0 || cgst > 0 || sgst > 0 || igst > 0))) {
-    net = Math.round((gross + cgst + sgst + igst + tcs - tds) * 100) / 100;
+  // If net is missing or was computed with addition (net >= billBase), deduct tax from net settlement
+  if (totalTax > 0) {
+    if (!net || isNaN(net) || net >= billBase) {
+      return Math.round((billBase - totalTax) * 100) / 100;
+    }
+    return net;
   }
-  return net;
+  return net || billBase;
 }
 
 // Global check whether a product is a secondary/by‑product (O(1) cached)
@@ -2178,7 +2194,7 @@ const dbController = {
       tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
       tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tdsAmount - tcsAmount) * 100) / 100;
       status = billType === 'cash_bill' ? 'cash_bill' : 'billed';
     }
 
@@ -2311,7 +2327,7 @@ const dbController = {
       tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
       tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tdsAmount - tcsAmount) * 100) / 100;
     }
 
     dbState.arrivals[index] = {
@@ -2524,7 +2540,7 @@ const dbController = {
       tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
       tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tcsAmount - tdsAmount) * 100) / 100;
       status = billType === 'cash_bill' ? 'cash_bill' : 'billed';
     }
 
@@ -2638,7 +2654,7 @@ const dbController = {
       tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
       tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
 
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
+      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tcsAmount - tdsAmount) * 100) / 100;
     }
 
     dbState.dispatches[index] = {
@@ -3029,7 +3045,7 @@ const dbController = {
 
     const tdsAmount = Math.round((settlementGrossAmount * (Number(tdsRate) / 100)) * 100) / 100;
     const tcsAmount = Math.round((settlementGrossAmount * (Number(tcsRate) / 100)) * 100) / 100;
-    const settlementNetAmount = Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount + tcsAmount) * 100) / 100;
+    const settlementNetAmount = Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount - tcsAmount) * 100) / 100;
 
     const id = 'set_' + Date.now();
     const count = dbState.settlements.length + 1;
@@ -3267,7 +3283,7 @@ const dbController = {
     const cgstAmount = Number(st.cgstAmount) || 0;
     const sgstAmount = Number(st.sgstAmount) || 0;
     const igstAmount = Number(st.igstAmount) || 0;
-    const settlementNetAmount = data.settlementNetAmount !== undefined ? Number(data.settlementNetAmount) : Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount + tcsAmount - tdsAmount) * 100) / 100;
+    const settlementNetAmount = data.settlementNetAmount !== undefined ? Number(data.settlementNetAmount) : Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount - tcsAmount) * 100) / 100;
 
     dbState.settlements[index] = {
       ...st,

@@ -46,8 +46,8 @@ export default function ArrivalEntryModal({
   const [cgstRate, setCgstRate] = useState(0);
   const [sgstRate, setSgstRate] = useState(0);
   const [igstRate, setIgstRate] = useState(0);
-  const [tcsRate, setTcsRate] = useState(0.1);
-  const [tdsRate, setTdsRate] = useState(0);
+  const [tcsRate, setTcsRate] = useState(0);
+  const [tdsRate, setTdsRate] = useState(0.1);
   const [remarks, setRemarks] = useState('');
   const [saveAndAddAnother, setSaveAndAddAnother] = useState(false);
   const [successBanner, setSuccessBanner] = useState('');
@@ -75,8 +75,8 @@ export default function ArrivalEntryModal({
     setCgstRate(arr.cgstRate !== undefined ? arr.cgstRate : (isHusk ? 2.5 : 0));
     setSgstRate(arr.sgstRate !== undefined ? arr.sgstRate : (isHusk ? 2.5 : 0));
     setIgstRate(arr.igstRate !== undefined ? arr.igstRate : 0);
-    setTcsRate(arr.tcsRate !== undefined ? arr.tcsRate : 0.1);
-    setTdsRate(arr.tdsRate !== undefined ? arr.tdsRate : 0);
+    setTdsRate(arr.tdsRate !== undefined && arr.tdsRate !== 0 ? arr.tdsRate : (arr.tcsRate !== undefined && arr.tcsRate !== 0 ? arr.tcsRate : 0.1));
+    setTcsRate(arr.tcsRate !== undefined && arr.tdsRate !== undefined && arr.tdsRate !== 0 ? arr.tcsRate : 0);
     setRemarks(arr.remarks || '');
     if (arr.commitmentId) setCommitmentId(arr.commitmentId);
   };
@@ -202,7 +202,7 @@ export default function ArrivalEntryModal({
 
   let tcsAmount = Math.round((taxableAmount * (numTcs / 100)) * 100) / 100;
   let tdsAmount = Math.round((taxableAmount * (numTds / 100)) * 100) / 100;
-  let netAmount = Math.round((billAmount + tcsAmount - tdsAmount) * 100) / 100;
+  let netAmount = Math.round((billAmount - tdsAmount - tcsAmount) * 100) / 100;
 
   const handleCommitmentSelect = (cId) => {
     setCommitmentId(cId);
@@ -674,50 +674,50 @@ export default function ArrivalEntryModal({
                         <input type="number" step="0.1" className="form-control form-control-sm" value={sgstRate} onChange={e => setSgstRate(e.target.value)} />
                       </div>
                       <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="form-control form-control-sm num-input"
-                          placeholder="0.10"
-                          value={tcsRate}
-                          onChange={e => setTcsRate(e.target.value)}
-                        />
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
                         <input
                           type="number"
                           step="0.01"
                           className="form-control form-control-sm num-input"
-                          placeholder="0.00"
+                          placeholder="0.10"
                           value={tdsRate}
                           onChange={e => setTdsRate(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.00"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
                         />
                       </div>
                     </div>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxWidth: '360px' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="form-control form-control-sm num-input"
-                          placeholder="0.10"
-                          value={tcsRate}
-                          onChange={e => setTcsRate(e.target.value)}
-                        />
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>TDS % (u/s 194Q)</label>
                         <input
                           type="number"
                           step="0.01"
                           className="form-control form-control-sm num-input"
-                          placeholder="0.00"
+                          placeholder="0.10"
                           value={tdsRate}
                           onChange={e => setTdsRate(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label" style={{ fontSize: '0.8rem' }}>TCS % (u/s 206C)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="form-control form-control-sm num-input"
+                          placeholder="0.00"
+                          value={tcsRate}
+                          onChange={e => setTcsRate(e.target.value)}
                         />
                       </div>
                     </div>
@@ -747,13 +747,15 @@ export default function ArrivalEntryModal({
                     <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: '#38bdf8' }}>+₹{(calcCgst + calcSgst + calcIgst).toLocaleString()}</strong>
                   </div>
                   <div>
-                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (+): </span>
-                    <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#fbbf24' }}>+₹{tcsAmount.toLocaleString()}</strong>
-                  </div>
-                  <div>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TDS (-): </span>
                     <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#f87171' }}>-₹{tdsAmount.toLocaleString()}</strong>
                   </div>
+                  {tcsAmount > 0 && (
+                    <div>
+                      <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>TCS (-): </span>
+                      <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', color: '#f87171' }}>-₹{tcsAmount.toLocaleString()}</strong>
+                    </div>
+                  )}
                   <div style={{ textAlign: 'right' }}>
                     <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block' }}>Net Purchase Bill:</span>
                     <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '1.15rem', color: '#4ade80' }}>₹{netAmount.toLocaleString()}</strong>
