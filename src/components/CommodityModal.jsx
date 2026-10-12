@@ -58,7 +58,7 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
     setName(prod.name || '');
     setCode(prod.code || '');
     setDescription(prod.description || '');
-    setCalculationBasis(prod.calculationBasis || (prod.name.toLowerCase().includes('raw') ? 'end_product' : 'direct'));
+    setCalculationBasis(prod.calculationBasis || 'direct');
     setDefaultOutturn(String(prod.defaultOutturn !== undefined ? prod.defaultOutturn : '26'));
     setDefaultOutturnType(prod.defaultOutturnType || 'per_50kg');
     setCgstRate(String(prod.cgstRate !== undefined ? prod.cgstRate : '0'));
@@ -459,6 +459,7 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
               <tbody>
                 {productsList.map(prod => {
                   const isEnd = prod.calculationBasis === 'end_product';
+                  const isDirect = prod.calculationBasis === 'direct';
                   const cgst = prod.cgstRate || 0;
                   const sgst = prod.sgstRate || 0;
                   return (
@@ -481,14 +482,14 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
                           fontWeight: 600,
                           padding: '0.15rem 0.45rem',
                           borderRadius: '4px',
-                          background: isEnd ? '#eff6ff' : '#ecfdf5',
-                          color: isEnd ? '#1d4ed8' : '#047857'
+                          background: isEnd ? '#eff6ff' : isDirect ? '#ecfdf5' : '#fffbeb',
+                          color: isEnd ? '#1d4ed8' : isDirect ? '#047857' : '#b45309'
                         }}>
-                          {isEnd ? '☕ Outturn / EP' : '🏷️ Direct Weight'}
+                          {isEnd ? '☕ Outturn / EP' : isDirect ? '🏷️ Direct Weight' : '⚠️ Unset Basis'}
                         </span>
                       </td>
                       <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center', color: isEnd ? '#1e40af' : '#64748b' }}>
-                        {isEnd ? `${prod.defaultOutturn || 26} kg/50kg` : '100% (Direct)'}
+                        {isEnd ? `${prod.defaultOutturn || 26} kg/50kg` : isDirect ? '100% (Direct)' : '—'}
                       </td>
                       <td style={{ padding: '0.6rem 0.5rem', textAlign: 'center' }}>
                         <span style={{

@@ -27,6 +27,7 @@ export default function DispatchEntryModal({
   const [product, setProduct] = useState('RC EP');
   const [customProduct, setCustomProduct] = useState('');
   const [isCustomProduct, setIsCustomProduct] = useState(false);
+  const [chosenBasis, setChosenBasis] = useState(null); // 'end_product' | 'direct' | null
   
   const [weight, setWeight] = useState('');
   const [bags, setBags] = useState('');
@@ -72,6 +73,7 @@ export default function DispatchEntryModal({
       
       setProduct(dispatchToEdit.product || '');
       setIsCustomProduct(false);
+      setChosenBasis(dispatchToEdit.calculationBasis || null);
 
       setWeight(dispatchToEdit.weight ? String(dispatchToEdit.weight) : '');
       setBags(dispatchToEdit.bags ? String(dispatchToEdit.bags) : '');
@@ -191,9 +193,12 @@ export default function DispatchEntryModal({
   // Live Calculations
   const currentProdName = isCustomProduct ? customProduct : product;
   const selectedProductObj = products.find(p => p.name === currentProdName || p.code === currentProdName);
-  const isDirectBasis = selectedProductObj 
-    ? selectedProductObj.calculationBasis === 'direct' 
-    : (!currentProdName.toLowerCase().includes('raw') && !currentProdName.toLowerCase().includes('cherry') && !currentProdName.toLowerCase().includes('parchment'));
+  const activeBasis = chosenBasis !== null
+    ? chosenBasis
+    : (selectedProductObj && selectedProductObj.calculationBasis !== undefined && selectedProductObj.calculationBasis !== null
+        ? selectedProductObj.calculationBasis
+        : null);
+  const isDirectBasis = activeBasis === 'direct';
 
   const numWeight = parseFloat(weight) || 0;
   const numBags = parseFloat(bags) || 0;
@@ -256,6 +261,10 @@ export default function DispatchEntryModal({
     }
     if (rateType !== 'storage_out' && (rate === '' || isNaN(parseFloat(rate)))) {
       setError('Please enter a valid sale rate.');
+      return;
+    }
+    if (selectedProductObj && activeBasis === null) {
+      setError(`Please choose valuation basis (End Product Outturn or Direct Weight) for "${selectedProductObj.name}".`);
       return;
     }
 
@@ -431,10 +440,11 @@ export default function DispatchEntryModal({
                 fontWeight: 600,
                 padding: '0.15rem 0.5rem',
                 borderRadius: '4px',
-                background: isDirectBasis ? '#ecfdf5' : '#eff6ff',
-                color: isDirectBasis ? '#047857' : '#1d4ed8'
+                background: activeBasis === 'direct' ? '#ecfdf5' : activeBasis === 'end_product' ? '#eff6ff' : '#fffbeb',
+                color: activeBasis === 'direct' ? '#047857' : activeBasis === 'end_product' ? '#1d4ed8' : '#b45309',
+                border: activeBasis ? 'none' : '1px dashed #f59e0b'
               }}>
-                {isDirectBasis ? '🏷️ Main Product (Direct Weight)' : '☕ Raw Commodity (EP via Outturn)'}
+                {activeBasis === 'direct' ? '🏷️ Main Product (Direct Weight)' : activeBasis === 'end_product' ? '☕ Raw Commodity (EP via Outturn)' : '⚠️ Basis Not Set (Select below)'}
               </span>
             </div>
 
@@ -443,6 +453,11 @@ export default function DispatchEntryModal({
               onChange={(pCode, pObj) => {
                 setProduct(pCode);
                 if (pObj) {
+                  if (pObj.calculationBasis) {
+                    setChosenBasis(pObj.calculationBasis);
+                  } else {
+                    setChosenBasis(null);
+                  }
                   if (pObj.cgstRate !== undefined) setCgstRate(pObj.cgstRate);
                   if (pObj.sgstRate !== undefined) setSgstRate(pObj.sgstRate);
                   if (pObj.igstRate !== undefined) setIgstRate(pObj.igstRate);
@@ -457,6 +472,57 @@ export default function DispatchEntryModal({
               category="all"
               placeholder="Search or select commodity product..."
             />
+            {selectedProductObj && (selectedProductObj.calculationBasis === null || selectedProductObj.calculationBasis === undefined) && (
+              <div style={{
+                background: '#fffbeb',
+                border: '1.5px dashed #f59e0b',
+                borderRadius: '8px',
+                padding: '0.65rem 0.85rem',
+                marginTop: '0.5rem'
+              }}>
+                <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#b45309', marginBottom: '0.35rem' }}>
+                  ⚠️ Calculation Basis is not set for "{selectedProductObj.name}". How should this lot be calculated?
+                </div>
+                <div style={{ display: 'flex', gap: '0.6rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: activeBasis === 'end_product' ? '#2563eb' : '#fff',
+                      color: activeBasis === 'end_product' ? '#fff' : '#1e40af',
+                      border: '1px solid #2563eb',
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                      padding: '0.3rem 0.65rem'
+                    }}
+                    onClick={() => {
+                      setChosenBasis('end_product');
+                      if (!outturn || outturn === '50') setOutturn('26');
+                    }}
+                  >
+                    ☕ End Product (EP Outturn)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: activeBasis === 'direct' ? '#059669' : '#fff',
+                      color: activeBasis === 'direct' ? '#fff' : '#065f46',
+                      border: '1px solid #059669',
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                      padding: '0.3rem 0.65rem'
+                    }}
+                    onClick={() => {
+                      setChosenBasis('direct');
+                      setOutturn('50');
+                    }}
+                  >
+                    🏷️ Direct Standard Weight
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Weight, Bags, Outturn Calculations */}

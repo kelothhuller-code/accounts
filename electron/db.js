@@ -39,12 +39,6 @@ if (!fs.existsSync(archivesDir)) {
   }
 }
 
-// Automatic migration from coffee_store.json to commodity_store.json if old file exists
-if (!fs.existsSync(localDbFile) && fs.existsSync(oldDbFile)) {
-  try {
-    fs.copyFileSync(oldDbFile, localDbFile);
-  } catch (e) { }
-}
 
 // Default products list - empty array so no products are predefined by default
 const DEFAULT_PRODUCTS = [];
@@ -113,7 +107,7 @@ function loadLocalDb() {
         const sgst = p.sgstRate !== undefined ? Number(p.sgstRate) : 0;
         return {
           ...p,
-          calculationBasis: p.calculationBasis || 'direct',
+          calculationBasis: p.calculationBasis ?? null,
           defaultOutturn: p.defaultOutturn !== undefined ? Number(p.defaultOutturn) : 50,
           defaultOutturnType: p.defaultOutturnType || 'per_50kg',
           cgstRate: cgst,
@@ -748,7 +742,12 @@ function mergeCollections(localList = [], remoteList = []) {
   for (const item of (remoteList || [])) {
     if (item && item.id) {
       const existing = map.get(item.id);
-      map.set(item.id, existing ? { ...existing, ...item } : item);
+      if (existing) {
+        const newer = (item.updatedAt || 0) >= (existing.updatedAt || 0) ? item : existing;
+        map.set(item.id, { ...existing, ...item, ...newer });
+      } else {
+        map.set(item.id, item);
+      }
     }
   }
   return Array.from(map.values());
@@ -1233,9 +1232,9 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     totalTdsDeducted += tds;
   });
 
-  // Net Stored Stock calculation before EP Transfers
-  let storageBags = Math.max(0, (Number(supplier.openingStorageBags) || 0) + storeInBags - storeOutBags);
-  let storageEndProduct = Math.max(0, (Number(supplier.openingStorageEP) || 0) + storeInEP - storeOutEP);
+  // Net Stored Stock calculation before EP Transfers (preserves negative/overdrawn balance to reflect party deficit)
+  let storageBags = (Number(supplier.openingStorageBags) || 0) + storeInBags - storeOutBags;
+  let storageEndProduct = (Number(supplier.openingStorageEP) || 0) + storeInEP - storeOutEP;
 
   // 4. Process EP Stock Transfers
   let epTransferredOut = 0;
@@ -1249,8 +1248,8 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
 
     if (trf.fromPartyId === supplierId) {
       epTransferredOut += ep;
-      storageEndProduct = Math.max(0, storageEndProduct - ep);
-      storageBags = Math.max(0, storageBags - b);
+      storageEndProduct = storageEndProduct - ep;
+      storageBags = storageBags - b;
       transferFinancialNet -= val;
     }
     if (trf.toPartyId === supplierId) {
@@ -1284,8 +1283,8 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     openingBal = Math.abs(openingBal);  // We owe party
   }
 
-  // Net Stored Stock calculation
-  const storageAvgOutturn = storageBags > 0 ? (storageEndProduct / storageBags) : 0;
+  // Net Stored Stock calculation (average outturn yield ratio)
+  const storageAvgOutturn = (storageBags && storageBags !== 0) ? Math.round(Math.abs(storageEndProduct / storageBags) * 100) / 100 : 0;
 
   // Separate main vs secondary EP for dispatches
   let totalDispatchEP = 0;
@@ -1593,7 +1592,7 @@ const dbController = {
     const id = 'prod_' + Date.now();
     const code = (productData.code || name.toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 12)).toUpperCase().trim();
     const isSec = productData.isSecondary !== undefined ? !!productData.isSecondary : (productData.isMain === false);
-    const calculationBasis = productData.calculationBasis || 'direct';
+    const calculationBasis = productData.calculationBasis ?? null;
     const cgst = productData.cgstRate !== undefined ? Number(productData.cgstRate) : 0;
     const sgst = productData.sgstRate !== undefined ? Number(productData.sgstRate) : 0;
     const igst = productData.igstRate !== undefined ? Number(productData.igstRate) : (cgst + sgst);
@@ -1612,7 +1611,9 @@ const dbController = {
       sgstRate: sgst,
       igstRate: igst,
       hsnCode: productData.hsnCode || '',
-      description: productData.description || ''
+      description: productData.description || '',
+      updatedAt: Date.now(),
+      createdAt: new Date().toISOString()
     };
     dbState.products.push(newProduct);
     rebuildProductIndices();
@@ -1636,15 +1637,16 @@ const dbController = {
       name: productData.name !== undefined ? productData.name.trim() : p.name,
       code: productData.code !== undefined ? productData.code.trim().toUpperCase() : p.code,
       isMain: productData.isMain !== undefined ? !!productData.isMain : p.isMain,
-      isSecondary: productData.isSecondary !== undefined ? !!productData.isSecondary : (!productData.isMain),
-      calculationBasis: productData.calculationBasis || p.calculationBasis || 'direct',
+      isSecondary: productData.isSecondary ?? (productData.isMain !== undefined ? !productData.isMain : p.isSecondary),
+      calculationBasis: productData.calculationBasis !== undefined ? productData.calculationBasis : (p.calculationBasis ?? null),
       defaultOutturn: productData.defaultOutturn !== undefined ? Number(productData.defaultOutturn) : (p.defaultOutturn || 26),
       defaultOutturnType: productData.defaultOutturnType || p.defaultOutturnType || 'per_50kg',
       cgstRate: cgst,
       sgstRate: sgst,
       igstRate: igst,
       hsnCode: productData.hsnCode !== undefined ? productData.hsnCode : (p.hsnCode || ''),
-      description: productData.description !== undefined ? productData.description : (p.description || '')
+      description: productData.description !== undefined ? productData.description : (p.description || ''),
+      updatedAt: Date.now()
     };
     dbState.products[index] = updated;
     rebuildProductIndices();
@@ -1727,6 +1729,7 @@ const dbController = {
       openingBalanceType: data.openingBalanceType || 'credit',
       openingStorageBags: Number(data.openingStorageBags) || 0,
       openingStorageEP: Number(data.openingStorageEP) || 0,
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
     dbState.suppliers.push(newSupplier);
@@ -1770,6 +1773,7 @@ const dbController = {
       openingBalanceType: data.openingBalanceType !== undefined ? data.openingBalanceType : (dbState.suppliers[index].openingBalanceType || 'credit'),
       openingStorageBags: data.openingStorageBags !== undefined ? Number(data.openingStorageBags) : (dbState.suppliers[index].openingStorageBags || 0),
       openingStorageEP: data.openingStorageEP !== undefined ? Number(data.openingStorageEP) : (dbState.suppliers[index].openingStorageEP || 0),
+      updatedAt: Date.now()
     };
 
     if (newName !== oldName) {
@@ -1847,6 +1851,7 @@ const dbController = {
       status: 'active',
       date: data.date || new Date().toISOString().split('T')[0],
       notes: data.notes || '',
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -1886,7 +1891,8 @@ const dbController = {
       remainingQty: Math.round(remainingQty * 100) / 100,
       status,
       date: data.date || com.date,
-      notes: data.notes !== undefined ? data.notes : com.notes
+      notes: data.notes !== undefined ? data.notes : com.notes,
+      updatedAt: Date.now()
     };
 
     saveLocalDb();
@@ -2239,6 +2245,7 @@ const dbController = {
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
       remarks: data.remarks || '',
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -2359,7 +2366,8 @@ const dbController = {
       netAmount,
       remainingBags: arr.status === 'storage' ? Math.max(0, bags - (arr.settledBags || 0)) : arr.remainingBags,
       remainingEndProduct: arr.status === 'storage' ? Math.max(0, endProductWeight - (arr.settledEndProduct || 0)) : arr.remainingEndProduct,
-      remarks: data.remarks !== undefined ? data.remarks : arr.remarks
+      remarks: data.remarks !== undefined ? data.remarks : arr.remarks,
+      updatedAt: Date.now()
     };
 
     saveLocalDb();
@@ -2584,6 +2592,7 @@ const dbController = {
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
       remarks: data.remarks || '',
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -2687,7 +2696,8 @@ const dbController = {
       netAmount,
       remainingBags: disp.status === 'storage_out' ? Math.max(0, bags - (disp.settledBags || 0)) : disp.remainingBags,
       remainingEndProduct: disp.status === 'storage_out' ? Math.max(0, endProductWeight - (disp.settledEndProduct || 0)) : disp.remainingEndProduct,
-      remarks: data.remarks !== undefined ? data.remarks : disp.remarks
+      remarks: data.remarks !== undefined ? data.remarks : disp.remarks,
+      updatedAt: Date.now()
     };
 
     saveLocalDb();
@@ -2795,6 +2805,7 @@ const dbController = {
       rate,
       transferValue,
       notes: data.notes || '',
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -3189,6 +3200,7 @@ const dbController = {
       notes,
       fy: getFinancialYear(date),
       isLocked: false,
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -3468,6 +3480,7 @@ const dbController = {
       notes: data.notes || '',
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -3499,7 +3512,8 @@ const dbController = {
       mode: data.mode || pay.mode,
       amount: data.amount !== undefined ? Number(data.amount) : pay.amount,
       reference: data.reference !== undefined ? data.reference : pay.reference,
-      notes: data.notes !== undefined ? data.notes : pay.notes
+      notes: data.notes !== undefined ? data.notes : pay.notes,
+      updatedAt: Date.now()
     };
 
     saveLocalDb();
@@ -3697,19 +3711,37 @@ const dbController = {
       .filter(c => (c.category === 'purchase' || !c.category) && c.status === 'active')
       .forEach(c => {
         const isSec = isSecItem(c);
-        const rem = Number(c.remainingQty) !== undefined ? Number(c.remainingQty) : (Number(c.quantity) || 0);
-        const prodObj = (dbState.products || []).find(p => getCanonicalName(p.name) === getCanonicalName(c.product));
+        const rem = (c.remainingQty !== undefined && c.remainingQty !== null && !isNaN(Number(c.remainingQty)))
+          ? Number(c.remainingQty)
+          : (Number(c.quantity) || 0);
+        const prodObj = (dbState.products || []).find(p => 
+          getCanonicalName(p.name) === getCanonicalName(c.product) || 
+          p.code?.toLowerCase().trim() === c.product?.toLowerCase().trim()
+        );
+        const pName = ((c.product || prodObj?.name || '') + '').toLowerCase().trim();
+        const isRawCommodity = pName.includes('raw') || pName.includes('parchment') || pName.includes('cherry') || pName.includes('estate') || pName.includes('unmilled');
+        const isOutturn = isRawCommodity || (prodObj ? (prodObj.calculationBasis === 'end_product' || (prodObj.calculationBasis !== 'direct' && Number(prodObj.defaultOutturn) < 50)) : (!pName.includes('husk') && !pName.includes('direct')));
+        const outturn = (prodObj && Number(prodObj.defaultOutturn) > 0 && Number(prodObj.defaultOutturn) < 50) ? Number(prodObj.defaultOutturn) : 26;
+
         let epQty = rem;
+        const bagsQty = c.type === 'bags' ? rem : Math.round(rem / 50);
+
         if (c.type === 'bags') {
-          const outturn = prodObj?.defaultOutturn || 26; // 26 kg EP per 50 kg bag (52%)
-          epQty = rem * outturn;
+          epQty = rem * (isOutturn ? outturn : (Number(prodObj?.defaultOutturn) || 50));
+        } else if (isOutturn) {
+          // Outturn-based commodity with total weight: take total weight * 26 (avg outturn per 50kg bag) to calculate EP
+          epQty = (rem / 50) * outturn;
+        } else {
+          // Direct commodity: net weight equals EP weight
+          epQty = rem;
         }
+
         if (isSec) {
           purchaseCommitmentsPendingEPSec += epQty;
-          purchaseCommitmentsPendingBagsSec += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          purchaseCommitmentsPendingBagsSec += bagsQty;
         } else {
           purchaseCommitmentsPendingEP += epQty;
-          purchaseCommitmentsPendingBags += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          purchaseCommitmentsPendingBags += bagsQty;
         }
       });
 
@@ -3722,19 +3754,37 @@ const dbController = {
       .filter(c => c.category === 'sale' && c.status === 'active')
       .forEach(c => {
         const isSec = isSecItem(c);
-        const rem = Number(c.remainingQty) !== undefined ? Number(c.remainingQty) : (Number(c.quantity) || 0);
-        const prodObj = (dbState.products || []).find(p => getCanonicalName(p.name) === getCanonicalName(c.product));
+        const rem = (c.remainingQty !== undefined && c.remainingQty !== null && !isNaN(Number(c.remainingQty)))
+          ? Number(c.remainingQty)
+          : (Number(c.quantity) || 0);
+        const prodObj = (dbState.products || []).find(p => 
+          getCanonicalName(p.name) === getCanonicalName(c.product) || 
+          p.code?.toLowerCase().trim() === c.product?.toLowerCase().trim()
+        );
+        const pName = ((c.product || prodObj?.name || '') + '').toLowerCase().trim();
+        const isRawCommodity = pName.includes('raw') || pName.includes('parchment') || pName.includes('cherry') || pName.includes('estate') || pName.includes('unmilled');
+        const isOutturn = isRawCommodity || (prodObj ? (prodObj.calculationBasis === 'end_product' || (prodObj.calculationBasis !== 'direct' && Number(prodObj.defaultOutturn) < 50)) : (!pName.includes('husk') && !pName.includes('direct')));
+        const outturn = (prodObj && Number(prodObj.defaultOutturn) > 0 && Number(prodObj.defaultOutturn) < 50) ? Number(prodObj.defaultOutturn) : 26;
+
         let epQty = rem;
+        const bagsQty = c.type === 'bags' ? rem : Math.round(rem / 50);
+
         if (c.type === 'bags') {
-          const outturn = prodObj?.defaultOutturn || 26;
-          epQty = rem * outturn;
+          epQty = rem * (isOutturn ? outturn : (Number(prodObj?.defaultOutturn) || 50));
+        } else if (isOutturn) {
+          // Outturn-based commodity with total weight: take total weight * 26 (avg outturn per 50kg bag) to calculate EP
+          epQty = (rem / 50) * outturn;
+        } else {
+          // Direct commodity: net weight equals EP weight
+          epQty = rem;
         }
+
         if (isSec) {
           saleCommitmentsPendingEPSec += epQty;
-          saleCommitmentsPendingBagsSec += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          saleCommitmentsPendingBagsSec += bagsQty;
         } else {
           saleCommitmentsPendingEP += epQty;
-          saleCommitmentsPendingBags += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          saleCommitmentsPendingBags += bagsQty;
         }
       });
 
@@ -3879,6 +3929,7 @@ const dbController = {
       notes: data.notes || '',
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
@@ -3973,6 +4024,7 @@ const dbController = {
       outturn: Number(data.outturn) || 0,
       endProductWeight: Number(data.endProductWeight) || 0,
       notes: data.notes || '',
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 

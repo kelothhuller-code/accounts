@@ -493,7 +493,7 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               </div>
               <div>
                 <span>Current Balance Storage Stock:</span><br/>
-                <strong style="color: #7c3aed; font-size: 14px;">${(s.storageBags || 0).toLocaleString()} Bags</strong> (${(s.storageEndProduct || 0).toLocaleString()} kg EP)
+                <strong style="color: ${(s.storageEndProduct < 0 || s.storageBags < 0) ? '#dc2626' : '#7c3aed'}; font-size: 14px;">${(s.storageBags || 0).toLocaleString()} Bags</strong> (${(s.storageEndProduct || 0).toLocaleString()} kg EP)${(s.storageEndProduct < 0 || s.storageBags < 0) ? ' <span style="color: #dc2626; font-size: 11px; font-weight: bold;">(OVERDRAWN / DEFICIT)</span>' : ''}
               </div>
             </div>
           </div>
@@ -2137,13 +2137,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
               </div>
             </div>
 
-            <div style={{ background: '#1e293b', padding: '0.35rem 0.85rem', borderRadius: '6px', border: '1px solid #475569', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-              <span style={{ color: '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 600 }}>Balance Storage Stock:</span>
-              <span style={{ fontSize: '1rem', fontWeight: 800, color: '#a855f7' }}>
+            <div style={{ background: (s.storageEndProduct < 0 || s.storageBags < 0) ? '#450a0a' : '#1e293b', padding: '0.35rem 0.85rem', borderRadius: '6px', border: (s.storageEndProduct < 0 || s.storageBags < 0) ? '1px solid #dc2626' : '1px solid #475569', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <span style={{ color: (s.storageEndProduct < 0 || s.storageBags < 0) ? '#fca5a5' : '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', fontWeight: 600 }}>Balance Storage Stock:</span>
+              <span style={{ fontSize: '1rem', fontWeight: 800, color: (s.storageEndProduct < 0 || s.storageBags < 0) ? '#f87171' : '#a855f7' }}>
                 {(s.storageBags || 0).toLocaleString()} Bags
               </span>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#e9d5ff' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: (s.storageEndProduct < 0 || s.storageBags < 0) ? '#fecaca' : '#e9d5ff' }}>
                 ({(s.storageEndProduct || 0).toLocaleString()} kg EP)
+                {(s.storageEndProduct < 0 || s.storageBags < 0) && ' ⚠️ DEFICIT (OVERDRAWN)'}
               </span>
             </div>
           </div>

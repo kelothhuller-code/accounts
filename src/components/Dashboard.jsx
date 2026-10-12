@@ -317,19 +317,37 @@ export default function Dashboard({
       .filter(c => (c.category === 'purchase' || !c.category) && c.status === 'active')
       .forEach(c => {
         const isSec = isSecItem(c);
-        const rem = Number(c.remainingQty) !== undefined ? Number(c.remainingQty) : (Number(c.quantity) || 0);
-        const prodObj = (products || []).find(p => p.name?.toLowerCase().trim() === c.product?.toLowerCase().trim());
+        const rem = (c.remainingQty !== undefined && c.remainingQty !== null && !isNaN(Number(c.remainingQty)))
+          ? Number(c.remainingQty)
+          : (Number(c.quantity) || 0);
+        const prodObj = (products || []).find(p => 
+          p.name?.toLowerCase().trim() === c.product?.toLowerCase().trim() ||
+          p.code?.toLowerCase().trim() === c.product?.toLowerCase().trim()
+        );
+        const pName = ((c.product || prodObj?.name || '') + '').toLowerCase().trim();
+        const isRawCommodity = pName.includes('raw') || pName.includes('parchment') || pName.includes('cherry') || pName.includes('estate') || pName.includes('unmilled');
+        const isOutturn = isRawCommodity || (prodObj ? (prodObj.calculationBasis === 'end_product' || (prodObj.calculationBasis !== 'direct' && Number(prodObj.defaultOutturn) < 50)) : (!pName.includes('husk') && !pName.includes('direct')));
+        const outturn = (prodObj && Number(prodObj.defaultOutturn) > 0 && Number(prodObj.defaultOutturn) < 50) ? Number(prodObj.defaultOutturn) : 26;
+
         let epQty = rem;
+        const bagsQty = c.type === 'bags' ? rem : Math.round(rem / 50);
+
         if (c.type === 'bags') {
-          const outturn = prodObj?.defaultOutturn || 26;
-          epQty = rem * outturn;
+          epQty = rem * (isOutturn ? outturn : (Number(prodObj?.defaultOutturn) || 50));
+        } else if (isOutturn) {
+          // Outturn-based commodity with total weight: take total weight * 26 (avg outturn per 50kg bag) to calculate EP
+          epQty = (rem / 50) * outturn;
+        } else {
+          // Direct commodity: net weight equals EP weight
+          epQty = rem;
         }
+
         if (isSec) {
           purchaseCommitmentsPendingEPSec += epQty;
-          purchaseCommitmentsPendingBagsSec += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          purchaseCommitmentsPendingBagsSec += bagsQty;
         } else {
           purchaseCommitmentsPendingEP += epQty;
-          purchaseCommitmentsPendingBags += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          purchaseCommitmentsPendingBags += bagsQty;
         }
       });
 
@@ -342,19 +360,37 @@ export default function Dashboard({
       .filter(c => c.category === 'sale' && c.status === 'active')
       .forEach(c => {
         const isSec = isSecItem(c);
-        const rem = Number(c.remainingQty) !== undefined ? Number(c.remainingQty) : (Number(c.quantity) || 0);
-        const prodObj = (products || []).find(p => p.name?.toLowerCase().trim() === c.product?.toLowerCase().trim());
+        const rem = (c.remainingQty !== undefined && c.remainingQty !== null && !isNaN(Number(c.remainingQty)))
+          ? Number(c.remainingQty)
+          : (Number(c.quantity) || 0);
+        const prodObj = (products || []).find(p => 
+          p.name?.toLowerCase().trim() === c.product?.toLowerCase().trim() ||
+          p.code?.toLowerCase().trim() === c.product?.toLowerCase().trim()
+        );
+        const pName = ((c.product || prodObj?.name || '') + '').toLowerCase().trim();
+        const isRawCommodity = pName.includes('raw') || pName.includes('parchment') || pName.includes('cherry') || pName.includes('estate') || pName.includes('unmilled');
+        const isOutturn = isRawCommodity || (prodObj ? (prodObj.calculationBasis === 'end_product' || (prodObj.calculationBasis !== 'direct' && Number(prodObj.defaultOutturn) < 50)) : (!pName.includes('husk') && !pName.includes('direct')));
+        const outturn = (prodObj && Number(prodObj.defaultOutturn) > 0 && Number(prodObj.defaultOutturn) < 50) ? Number(prodObj.defaultOutturn) : 26;
+
         let epQty = rem;
+        const bagsQty = c.type === 'bags' ? rem : Math.round(rem / 50);
+
         if (c.type === 'bags') {
-          const outturn = prodObj?.defaultOutturn || 26;
-          epQty = rem * outturn;
+          epQty = rem * (isOutturn ? outturn : (Number(prodObj?.defaultOutturn) || 50));
+        } else if (isOutturn) {
+          // Outturn-based commodity with total weight: take total weight * 26 (avg outturn per 50kg bag) to calculate EP
+          epQty = (rem / 50) * outturn;
+        } else {
+          // Direct commodity: net weight equals EP weight
+          epQty = rem;
         }
+
         if (isSec) {
           saleCommitmentsPendingEPSec += epQty;
-          saleCommitmentsPendingBagsSec += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          saleCommitmentsPendingBagsSec += bagsQty;
         } else {
           saleCommitmentsPendingEP += epQty;
-          saleCommitmentsPendingBags += (c.type === 'bags' ? rem : Math.round(rem / 50));
+          saleCommitmentsPendingBags += bagsQty;
         }
       });
 
