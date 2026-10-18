@@ -20,7 +20,11 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Scale,
+  Receipt,
+  FilePlus,
+  AlertCircle
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 import { exportToCsv } from '../utils/exportCsv';
@@ -136,6 +140,28 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
   const [comDate, setComDate] = useState(new Date().toISOString().split('T')[0]);
   const [comNotes, setComNotes] = useState('');
   const [savingCommitment, setSavingCommitment] = useState(false);
+
+  // Party Bill Modal (Service, Expense, Salary)
+  const [showBillModal, setShowBillModal] = useState(false);
+  const [editingBill, setEditingBill] = useState(null);
+  const [billCategory, setBillCategory] = useState('salary'); // 'salary', 'service', 'transport', 'labour', 'rent', 'maintenance', 'other'
+  const [billNo, setBillNo] = useState('');
+  const [billParticulars, setBillParticulars] = useState('');
+  const [billAmount, setBillAmount] = useState('');
+  const [billTdsRate, setBillTdsRate] = useState('0');
+  const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
+  const [billNotes, setBillNotes] = useState('');
+  const [savingBill, setSavingBill] = useState(false);
+
+  // Balance Adjustment Modal (Set small difference to zero)
+  const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+  const [editingAdjustment, setEditingAdjustment] = useState(null);
+  const [adjType, setAdjType] = useState('debit'); // 'debit' or 'credit'
+  const [adjAmount, setAdjAmount] = useState('');
+  const [adjReason, setAdjReason] = useState('Round-off balance to zero');
+  const [adjDate, setAdjDate] = useState(new Date().toISOString().split('T')[0]);
+  const [adjNotes, setAdjNotes] = useState('');
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
 
   useEffect(() => {
     if (isOpen && supplierId) {
@@ -373,6 +399,169 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
       if (onDataChanged) onDataChanged();
     } catch (err) {
       alert('Error: ' + err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Bill Service / Expense / Salary Handlers
+  const openNewPartyBill = (cat = 'salary') => {
+    setEditingBill(null);
+    setBillCategory(cat);
+    setBillNo('');
+    setBillParticulars(cat === 'salary' ? 'Monthly Salary' : '');
+    setBillAmount('');
+    setBillTdsRate('0');
+    setBillDate(new Date().toISOString().split('T')[0]);
+    setBillNotes('');
+    setShowBillModal(true);
+  };
+
+  const openEditPartyBill = (b) => {
+    setEditingBill(b);
+    setBillCategory(b.billCategory || 'salary');
+    setBillNo(b.billNo || '');
+    setBillParticulars(b.particulars || '');
+    setBillAmount(String(b.amount || ''));
+    setBillTdsRate(String(b.tdsRate !== undefined ? b.tdsRate : '0'));
+    setBillDate(safeDateStr(b.date, new Date().toISOString().split('T')[0]));
+    setBillNotes(b.notes || '');
+    setShowBillModal(true);
+  };
+
+  const handleSavePartyBill = async (e) => {
+    if (e) e.preventDefault();
+    if (!billAmount || parseFloat(billAmount) <= 0) {
+      alert('Please enter a valid bill amount.');
+      return;
+    }
+    setSavingBill(true);
+    try {
+      const amt = parseFloat(billAmount);
+      const tdsRate = parseFloat(billTdsRate) || 0;
+      const tdsAmt = tdsRate > 0 ? Math.round((amt * (tdsRate / 100)) * 100) / 100 : 0;
+      const net = Math.round((amt - tdsAmt) * 100) / 100;
+
+      const payload = {
+        supplierId,
+        supplierName: data.summary.name,
+        billNo: billNo ? billNo.trim() : undefined,
+        billCategory,
+        particulars: billParticulars.trim() || (billCategory === 'salary' ? 'Employee Salary' : 'Service Bill'),
+        amount: amt,
+        tdsRate,
+        tdsAmount: tdsAmt,
+        netAmount: net,
+        date: billDate,
+        notes: billNotes
+      };
+
+      if (editingBill) {
+        await dbAction('party-bills:update', { id: editingBill.id, data: payload });
+      } else {
+        await dbAction('party-bills:add', payload);
+      }
+      setShowBillModal(false);
+      setEditingBill(null);
+      await loadLedger();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      alert('Error saving bill: ' + err.message);
+    } finally {
+      setSavingBill(false);
+    }
+  };
+
+  const handleDeletePartyBill = async (b) => {
+    if (!window.confirm(`Are you sure you want to delete bill ${b.billNo || b.id} (₹${b.amount})?`)) return;
+    setDeletingId(b.id);
+    try {
+      await dbAction('party-bills:delete', { id: b.id });
+      await loadLedger();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      alert('Error deleting bill: ' + err.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Balance Adjustment Handlers
+  const openNewAdjustment = () => {
+    setEditingAdjustment(null);
+    const currNet = data?.summary?.netPayable || 0;
+    if (currNet > 0) {
+      setAdjType('debit');
+      setAdjAmount(String(currNet));
+      setAdjReason('Set balance difference to zero (Write-off payable)');
+    } else if (currNet < 0) {
+      setAdjType('credit');
+      setAdjAmount(String(Math.abs(currNet)));
+      setAdjReason('Set balance difference to zero (Write-off receivable)');
+    } else {
+      setAdjType('debit');
+      setAdjAmount('0');
+      setAdjReason('Round-off balance');
+    }
+    setAdjDate(new Date().toISOString().split('T')[0]);
+    setAdjNotes('');
+    setShowAdjustmentModal(true);
+  };
+
+  const openEditBalanceAdjustment = (adj) => {
+    setEditingAdjustment(adj);
+    setAdjType(adj.type || 'debit');
+    setAdjAmount(String(adj.amount || ''));
+    setAdjReason(adj.reason || 'Balance Adjustment');
+    setAdjDate(safeDateStr(adj.date, new Date().toISOString().split('T')[0]));
+    setAdjNotes(adj.notes || '');
+    setShowAdjustmentModal(true);
+  };
+
+  const handleSaveBalanceAdjustment = async (e) => {
+    if (e) e.preventDefault();
+    if (!adjAmount || parseFloat(adjAmount) <= 0) {
+      alert('Please enter a valid adjustment amount.');
+      return;
+    }
+    setSavingAdjustment(true);
+    try {
+      const payload = {
+        supplierId,
+        supplierName: data.summary.name,
+        adjustmentNo: editingAdjustment ? editingAdjustment.adjustmentNo : undefined,
+        type: adjType,
+        amount: parseFloat(adjAmount),
+        reason: adjReason.trim() || 'Balance Adjustment to Zero',
+        date: adjDate,
+        notes: adjNotes
+      };
+
+      if (editingAdjustment) {
+        await dbAction('balance-adjustments:update', { id: editingAdjustment.id, data: payload });
+      } else {
+        await dbAction('balance-adjustments:add', payload);
+      }
+      setShowAdjustmentModal(false);
+      setEditingAdjustment(null);
+      await loadLedger();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      alert('Error saving adjustment: ' + err.message);
+    } finally {
+      setSavingAdjustment(false);
+    }
+  };
+
+  const handleDeleteBalanceAdjustment = async (adj) => {
+    if (!window.confirm(`Are you sure you want to delete balance adjustment ${adj.adjustmentNo || adj.id} (₹${adj.amount})?`)) return;
+    setDeletingId(adj.id);
+    try {
+      await dbAction('balance-adjustments:delete', { id: adj.id });
+      await loadLedger();
+      if (onDataChanged) onDataChanged();
+    } catch (err) {
+      alert('Error deleting adjustment: ' + err.message);
     } finally {
       setDeletingId(null);
     }
@@ -921,6 +1110,50 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
       }
     });
 
+    // Party Bills (Salary, Services, Expenses) -> CREDIT (Amount we owe party)
+    (data.partyBills || []).forEach(bill => {
+      const amt = Number(bill.netAmount) || Number(bill.amount) || 0;
+      const tds = Number(bill.tdsAmount) || 0;
+      events.push({
+        date: safeDateStr(bill.date, '2026-01-01'),
+        type: bill.billCategory === 'salary' ? 'Salary Bill' : (bill.billCategory ? `${bill.billCategory.charAt(0).toUpperCase() + bill.billCategory.slice(1)} Bill` : 'Service/Expense Bill'),
+        ref: bill.billNo || 'BILL',
+        product: bill.particulars || (bill.billCategory === 'salary' ? 'Employee Salary' : 'Service Bill'),
+        bags: '-',
+        weight: '-',
+        endProduct: '-',
+        debit: 0,
+        credit: amt,
+        notes: bill.notes || (tds > 0 ? `TDS: -₹${tds.toLocaleString()}` : ''),
+        tcsAmount: 0,
+        tdsAmount: tds,
+        category: 'party_bill',
+        rawItem: bill
+      });
+    });
+
+    // Balance Adjustments (Debit to clear payable, Credit to clear receivable)
+    (data.balanceAdjustments || []).forEach(adj => {
+      const amt = Number(adj.amount) || 0;
+      const isDebit = adj.type === 'debit';
+      events.push({
+        date: safeDateStr(adj.date, '2026-01-01'),
+        type: 'Balance Adjustment',
+        ref: adj.adjustmentNo || 'ADJ',
+        product: adj.reason || (isDebit ? 'Round-off / Debit Adjustment' : 'Round-off / Credit Adjustment'),
+        bags: '-',
+        weight: '-',
+        endProduct: '-',
+        debit: isDebit ? amt : 0,
+        credit: !isDebit ? amt : 0,
+        notes: adj.notes || '',
+        tcsAmount: 0,
+        tdsAmount: 0,
+        category: 'balance_adjustment',
+        rawItem: adj
+      });
+    });
+
     // Sort chronologically
     events.sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -1256,8 +1489,18 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 <span className="metric-value" style={{ color: s.netPayable >= 0 ? '#dc2626' : '#059669' }}>
                   ₹{Math.abs(s.netPayable).toLocaleString()}
                 </span>
-                <span className="metric-sub" style={{ fontWeight: 600, color: s.netPayable >= 0 ? '#dc2626' : '#059669' }}>
-                  {s.netPayable >= 0 ? '(We Owe / Credit)' : '(Party Owes Us / Debit)'}
+                <span className="metric-sub" style={{ fontWeight: 600, color: s.netPayable >= 0 ? '#dc2626' : '#059669', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.25rem' }}>
+                  <span>{s.netPayable >= 0 ? '(We Owe / Credit)' : '(Party Owes Us / Debit)'}</span>
+                  {s.netPayable !== 0 && (
+                    <button
+                      className="btn btn-xs"
+                      style={{ fontSize: '0.68rem', padding: '0.1rem 0.45rem', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
+                      onClick={openNewAdjustment}
+                      title="Adjust balance to set difference to zero"
+                    >
+                      ⚡ Set to 0
+                    </button>
+                  )}
                 </span>
                 <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.2rem' }}>
                   Billed: ₹{s.totalBilledAmount.toLocaleString()} | Paid: ₹{s.totalPaid.toLocaleString()}
@@ -1385,10 +1628,31 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 >
                   <Handshake size={14} /> Commitments ({data.commitments ? data.commitments.length : 0})
                 </button>
+                <button
+                  className={`btn btn-sm ${activeTab === 'bills' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setActiveTab('bills')}
+                >
+                  <Receipt size={14} /> Bills & Expenses ({(data.partyBills || []).length})
+                </button>
               </div>
 
-
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-sm"
+                  style={{ background: '#3b82f6', color: '#fff', border: 'none', fontWeight: 600 }}
+                  onClick={() => openNewPartyBill('salary')}
+                  title="Bill salary for employees or bill services/expenses purchased from party"
+                >
+                  <FilePlus size={14} /> + Bill Salary / Expense
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{ background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 600 }}
+                  onClick={openNewAdjustment}
+                  title="Adjust balance to set small difference to zero"
+                >
+                  <Scale size={14} /> ⚡ Adjust Balance
+                </button>
                 <button
                   className="btn btn-sm btn-success"
                   onClick={() => openNewPayment('payment_paid')}
@@ -1535,6 +1799,10 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                                           openEditPayment(tx.rawItem);
                                         } else if (tx.category === 'commitment') {
                                           openEditCommitment(tx.rawItem);
+                                        } else if (tx.category === 'party_bill') {
+                                          openEditPartyBill(tx.rawItem);
+                                        } else if (tx.category === 'balance_adjustment') {
+                                          openEditBalanceAdjustment(tx.rawItem);
                                         }
                                       }}
                                     >
@@ -1550,6 +1818,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                                         else if (tx.category === 'settlement') handleDeleteSettlement(tx.rawItem);
                                         else if (tx.category === 'payment') handleDeletePayment(tx.rawItem);
                                         else if (tx.category === 'commitment') handleDeleteCommitment(tx.rawItem);
+                                        else if (tx.category === 'party_bill') handleDeletePartyBill(tx.rawItem);
+                                        else if (tx.category === 'balance_adjustment') handleDeleteBalanceAdjustment(tx.rawItem);
                                       }}
                                     >
                                       <Trash2 size={13} />
@@ -2102,6 +2372,89 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 </div>
               );
             })()}
+
+            {/* Tab 6: Service & Expense Bills */}
+            {activeTab === 'bills' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.4rem 0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                  <span style={{ fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
+                    Operating expenses, transport, labour, and employee salary billed against this party account.
+                  </span>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={() => openNewPartyBill('salary')}
+                  >
+                    <FilePlus size={14} /> + New Service / Salary Bill
+                  </button>
+                </div>
+
+                <div className="table-wrapper" style={{ maxHeight: '380px', overflowY: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Bill Ref #</th>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th>Particulars / Description</th>
+                        <th>Notes</th>
+                        <th className="num">Gross (₹)</th>
+                        <th className="num">TDS Deducted</th>
+                        <th className="num" style={{ color: '#059669' }}>Net Credited (₹)</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(data.partyBills || []).length === 0 ? (
+                        <tr><td colSpan="9" style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>No service or salary bills recorded for this party. Click "+ New Service / Salary Bill" above to add one.</td></tr>
+                      ) : (
+                        (data.partyBills || [])
+                          .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                          .map(b => (
+                            <tr key={b.id}>
+                              <td style={{ fontWeight: 600 }}>{b.billNo || 'BILL'}</td>
+                              <td>{b.date}</td>
+                              <td>
+                                <span className={`badge ${b.billCategory === 'salary' ? 'badge-blue' : b.billCategory === 'transport' ? 'badge-coffee' : 'badge-amber'}`}>
+                                  {b.billCategory === 'salary' ? '💼 Salary' : b.billCategory === 'transport' ? '🚛 Freight' : b.billCategory === 'labour' ? '👷 Labour' : b.billCategory === 'rent' ? '🏢 Rent' : b.billCategory === 'maintenance' ? '🔧 Maintenance' : '🛠️ Service'}
+                                </span>
+                              </td>
+                              <td style={{ fontWeight: 600 }}>{b.particulars}</td>
+                              <td style={{ fontSize: '0.75rem', color: '#64748b' }}>{b.notes || '-'}</td>
+                              <td className="num">₹{(Number(b.amount) || 0).toLocaleString()}</td>
+                              <td className="num" style={{ color: b.tdsAmount > 0 ? '#dc2626' : '#64748b' }}>
+                                {b.tdsAmount > 0 ? `-₹${(Number(b.tdsAmount) || 0).toLocaleString()} (${b.tdsRate}%)` : '-'}
+                              </td>
+                              <td className="num" style={{ fontWeight: 700, color: '#059669', fontSize: '0.92rem' }}>
+                                ₹{(Number(b.netAmount !== undefined ? b.netAmount : b.amount) || 0).toLocaleString()}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                  <button
+                                    title="Edit Bill"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2563eb', padding: '0.2rem' }}
+                                    onClick={() => openEditPartyBill(b)}
+                                  >
+                                    <Edit2 size={13} />
+                                  </button>
+                                  <button
+                                    title="Delete Bill"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: deletingId === b.id ? '#94a3b8' : '#dc2626', padding: '0.2rem' }}
+                                    disabled={deletingId === b.id}
+                                    onClick={() => handleDeletePartyBill(b)}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {renderPaginationControls((data.partyBills || []).length)}
+              </div>
+            )}
           </div>
         )}
 
@@ -2436,6 +2789,266 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
             </div>
           </div>
         )}
+        {/* Modal Sub-dialog: Bill Service / Expense / Employee Salary */}
+        {showBillModal && (
+          <div className="modal-overlay" style={{ background: 'rgba(0,0,0,0.4)', zIndex: 1200 }} onClick={() => setShowBillModal(false)}>
+            <div className="modal-content" style={{ maxWidth: '520px' }} onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <div className="modal-title">
+                  <span>{editingBill ? `✏️ Edit Bill ${editingBill.billNo || ''}` : '🧾 Bill Services, Expenses or Employee Salary'}</span>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowBillModal(false)}>
+                  <X size={14} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSavePartyBill} className="modal-body">
+                <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '0.55rem 0.75rem', fontSize: '0.78rem', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <AlertCircle size={16} />
+                  <span><strong>Credit to Party Account:</strong> This increases what we owe them. When you make payments via <strong>Record Paid</strong>, it offsets this bill and balances the ledger.</span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Bill Category *</label>
+                  <select className="form-control" value={billCategory} onChange={e => {
+                    setBillCategory(e.target.value);
+                    if (!billParticulars || billParticulars === 'Monthly Salary' || billParticulars === 'Service Bill') {
+                      setBillParticulars(e.target.value === 'salary' ? 'Monthly Salary' : e.target.value === 'transport' ? 'Transport / Freight Charges' : e.target.value === 'labour' ? 'Labour / Loading Charges' : 'Service Bill');
+                    }
+                  }}>
+                    <option value="salary">💼 Employee Salary / Wages</option>
+                    <option value="service">🛠️ Services Rendered / Contractor</option>
+                    <option value="transport">🚛 Transport & Freight Charges</option>
+                    <option value="labour">👷 Labour / Loading Charges</option>
+                    <option value="rent">🏢 Office / Godown Rent</option>
+                    <option value="maintenance">🔧 Repairs & Machine Maintenance</option>
+                    <option value="other">📑 Other Operating Expense</option>
+                  </select>
+                </div>
+
+                <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  <div className="form-group">
+                    <label className="form-label">Bill / Voucher Ref #</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="e.g. SAL-OCT-2026 or EXP-001"
+                      value={billNo}
+                      onChange={e => setBillNo(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Bill Date *</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={billDate}
+                      onChange={e => setBillDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Particulars / Description *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Salary for Month of October 2026 or Transport for Lot #5"
+                    value={billParticulars}
+                    onChange={e => setBillParticulars(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="form-grid" style={{ gridTemplateColumns: '1.2fr 0.8fr' }}>
+                  <div className="form-group">
+                    <label className="form-label">Bill Amount (₹) *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-control num-input"
+                      placeholder="Enter amount"
+                      value={billAmount}
+                      onChange={e => setBillAmount(e.target.value)}
+                      required
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">TDS Rate (%)</label>
+                    <select className="form-control" value={billTdsRate} onChange={e => setBillTdsRate(e.target.value)}>
+                      <option value="0">0% (Nil)</option>
+                      <option value="1">1% (194C Ind)</option>
+                      <option value="2">2% (194C Corp)</option>
+                      <option value="5">5% (Rent / Comm)</option>
+                      <option value="10">10% (194J Prof)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {billAmount && parseFloat(billAmount) > 0 && (
+                  <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '0.5rem 0.75rem', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Gross: <strong>₹{parseFloat(billAmount).toLocaleString()}</strong></span>
+                    {parseFloat(billTdsRate) > 0 && (
+                      <span style={{ color: '#dc2626' }}>TDS (-): <strong>₹{Math.round((parseFloat(billAmount) * (parseFloat(billTdsRate) / 100)) * 100 / 100).toLocaleString()}</strong></span>
+                    )}
+                    <span style={{ color: '#059669', fontWeight: 700 }}>Net Credited: ₹{Math.round((parseFloat(billAmount) - (parseFloat(billTdsRate) > 0 ? (parseFloat(billAmount) * (parseFloat(billTdsRate) / 100)) : 0)) * 100 / 100).toLocaleString()}</span>
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label className="form-label">Notes / Remarks</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Additional details..."
+                    value={billNotes}
+                    onChange={e => setBillNotes(e.target.value)}
+                  />
+                </div>
+
+                <div className="modal-footer" style={{ padding: '0.75rem 0 0 0', background: 'transparent' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowBillModal(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={savingBill}>
+                    {savingBill ? 'Saving...' : editingBill ? 'Update Bill' : 'Post Bill to Ledger'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Sub-dialog: Balance Adjustment (Set small difference to zero) */}
+        {showAdjustmentModal && (
+          <div className="modal-overlay" style={{ background: 'rgba(0,0,0,0.4)', zIndex: 1200 }} onClick={() => setShowAdjustmentModal(false)}>
+            <div className="modal-content" style={{ maxWidth: '480px' }} onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <div className="modal-title">
+                  <span>{editingAdjustment ? `✏️ Edit Adjustment ${editingAdjustment.adjustmentNo}` : '⚡ Adjust Party Balance to Zero'}</span>
+                </div>
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowAdjustmentModal(false)}>
+                  <X size={14} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveBalanceAdjustment} className="modal-body">
+                <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '6px', padding: '0.65rem 0.85rem' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#92400e', fontWeight: 600 }}>CURRENT PARTY BALANCE:</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: s.netPayable >= 0 ? '#b45309' : '#059669', marginTop: '0.15rem' }}>
+                    ₹{Math.abs(s.netPayable).toLocaleString()} <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{s.netPayable >= 0 ? '(We Owe Party / Credit)' : '(Party Owes Us / Debit)'}</span>
+                  </div>
+                </div>
+
+                {s.netPayable !== 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-coffee"
+                    style={{ width: '100%', justifyContent: 'center', fontWeight: 700 }}
+                    onClick={() => {
+                      if (s.netPayable > 0) {
+                        setAdjType('debit');
+                        setAdjAmount(String(Math.abs(s.netPayable)));
+                        setAdjReason('Set balance difference to zero (Write-off payable)');
+                      } else {
+                        setAdjType('credit');
+                        setAdjAmount(String(Math.abs(s.netPayable)));
+                        setAdjReason('Set balance difference to zero (Write-off receivable)');
+                      }
+                    }}
+                  >
+                    ⚡ Auto-Fill: Set Balance Exactly to ₹0.00 (Adjust ₹{Math.abs(s.netPayable).toLocaleString()})
+                  </button>
+                )}
+
+                <div className="form-group">
+                  <label className="form-label">Adjustment Type *</label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${adjType === 'debit' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ flex: 1 }}
+                      onClick={() => setAdjType('debit')}
+                    >
+                      Debit Adjustment (Clears Payable)
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${adjType === 'credit' ? 'btn-success' : 'btn-secondary'}`}
+                      style={{ flex: 1 }}
+                      onClick={() => setAdjType('credit')}
+                    >
+                      Credit Adjustment (Clears Receivable)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                  <div className="form-group">
+                    <label className="form-label">Adjustment Amount (₹) *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-control num-input"
+                      placeholder="Enter amount"
+                      value={adjAmount}
+                      onChange={e => setAdjAmount(e.target.value)}
+                      required
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Date *</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={adjDate}
+                      onChange={e => setAdjDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Reason / Adjustment Note</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Rounding off to zero / Small difference write-off"
+                    value={adjReason}
+                    onChange={e => setAdjReason(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Notes</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Optional remarks..."
+                    value={adjNotes}
+                    onChange={e => setAdjNotes(e.target.value)}
+                  />
+                </div>
+
+                <div className="modal-footer" style={{ padding: '0.75rem 0 0 0', background: 'transparent' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowAdjustmentModal(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={savingAdjustment}>
+                    {savingAdjustment ? 'Saving...' : editingAdjustment ? 'Update Adjustment' : 'Post Balance Adjustment'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

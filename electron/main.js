@@ -427,6 +427,32 @@ ipcMain.handle('db-action', async (event, action, payload) => {
       case 'payments:delete':
         return dbController.deletePayment(payload.id);
 
+      // PARTY SERVICE & EXPENSE BILLS
+      case 'party-bills:get':
+        return dbController.getPartyBills(payload?.supplierId);
+
+      case 'party-bills:add':
+        return dbController.addPartyBill(payload);
+
+      case 'party-bills:update':
+        return dbController.updatePartyBill(payload.id, payload.data);
+
+      case 'party-bills:delete':
+        return dbController.deletePartyBill(payload.id);
+
+      // BALANCE ADJUSTMENTS
+      case 'balance-adjustments:get':
+        return dbController.getBalanceAdjustments(payload?.supplierId);
+
+      case 'balance-adjustments:add':
+        return dbController.addBalanceAdjustment(payload);
+
+      case 'balance-adjustments:update':
+        return dbController.updateBalanceAdjustment(payload.id, payload.data);
+
+      case 'balance-adjustments:delete':
+        return dbController.deleteBalanceAdjustment(payload.id);
+
       // DISPATCHES
       case 'dispatches:get':
         return dbController.getDispatches(payload || {});

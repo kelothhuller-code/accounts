@@ -35,6 +35,8 @@ function getBrowserStore() {
     commitments: [],
     settlements: [],
     payments: [],
+    partyBills: [],
+    balanceAdjustments: [],
     epTransfers: [],
     commitmentWashes: [],
     millingLogs: [],
@@ -199,6 +201,8 @@ function mockBrowserFallback(action, payload) {
       const disps = store.dispatches.filter(d => d.supplierId === s.id || d.partyId === s.id);
       const sets = store.settlements.filter(st => st.supplierId === s.id);
       const pays = store.payments.filter(p => p.supplierId === s.id);
+      const bills = (store.partyBills || []).filter(b => b.supplierId === s.id);
+      const adjs = (store.balanceAdjustments || []).filter(a => a.supplierId === s.id);
       const epTrfs = (store.epTransfers || []).filter(t => t.fromPartyId === s.id || t.toPartyId === s.id);
 
       // Helper: determine if a record is secondary using stored flag first, product definition second
@@ -282,7 +286,9 @@ function mockBrowserFallback(action, payload) {
       const totTcs = arrs.reduce((acc, a) => acc + (Number(a.tcsAmount) || 0), 0) + disps.reduce((acc, d) => acc + (Number(d.tcsAmount) || 0), 0) + sets.reduce((acc, st) => acc + (Number(st.tcsAmount) || 0), 0);
       const totTds = arrs.reduce((acc, a) => acc + (Number(a.tdsAmount) || 0), 0) + disps.reduce((acc, d) => acc + (Number(d.tdsAmount) || 0), 0) + sets.reduce((acc, st) => acc + (Number(st.tdsAmount) || 0), 0);
 
-      return {
+        const totPartyBills = bills.reduce((acc, b) => acc + (b.netAmount !== undefined ? Number(b.netAmount) : (Number(b.amount) || 0)), 0);
+        const totAdj = adjs.reduce((acc, a) => acc + (a.type === 'debit' ? -(Number(a.amount) || 0) : (Number(a.amount) || 0)), 0);
+        return {
         ...s,
         totalRawWeight: totalRawWeightMain + totalRawWeightSecondary,
         totalRawWeightMain,
@@ -310,12 +316,14 @@ function mockBrowserFallback(action, payload) {
         storageAvgOutturn: Math.round(avgOutturn * 100) / 100,
         totalPurchasesBilled: totPurchases,
         totalSalesBilled: totSales,
-        totalBilledAmount: totPurchases + totSales,
+        totalPartyBillsBilled: totPartyBills,
+        totalAdjustmentNet: totAdj,
+        totalBilledAmount: totPurchases + totPartyBills - totSales,
         totalTcsDeducted: totTcs,
         totalTdsDeducted: totTds,
         totalPaid: totPaid,
         totalReceived: totRecv,
-        netPayable: totPurchases - totSales - totPaid + totRecv
+        netPayable: totPurchases + totPartyBills - totSales - totPaid + totRecv + totAdj
       };
     });
   }
@@ -327,6 +335,8 @@ function mockBrowserFallback(action, payload) {
     const disps = store.dispatches.filter(d => d.supplierId === payload.id || d.partyId === payload.id);
     const sets = store.settlements.filter(st => st.supplierId === payload.id);
     const pays = store.payments.filter(p => p.supplierId === payload.id);
+    const bills = (store.partyBills || []).filter(b => b.supplierId === payload.id);
+    const adjs = (store.balanceAdjustments || []).filter(a => a.supplierId === payload.id);
     const epTrfs = (store.epTransfers || []).filter(t => t.fromPartyId === payload.id || t.toPartyId === payload.id);
 
     const purArrivals = arrs.filter(a => a.status === 'billed' || a.status === 'cash_bill').reduce((acc, a) => acc + getEffectiveArrivalNetAmount(a), 0);
@@ -422,7 +432,10 @@ function mockBrowserFallback(action, payload) {
 
     const avgOutturn = (storageBags && storageBags !== 0) ? Math.round(Math.abs(storageEP / storageBags) * 100) / 100 : 0;
 
-    const summary = {
+      const totPartyBills = bills.reduce((acc, b) => acc + (b.netAmount !== undefined ? Number(b.netAmount) : (Number(b.amount) || 0)), 0);
+      const totAdj = adjs.reduce((acc, a) => acc + (a.type === 'debit' ? -(Number(a.amount) || 0) : (Number(a.amount) || 0)), 0);
+
+      const summary = {
       ...s,
       totalRawWeight: totalRawWeightMain + totalRawWeightSecondary,
       totalRawWeightMain,
@@ -450,12 +463,14 @@ function mockBrowserFallback(action, payload) {
       storageAvgOutturn: Math.round(avgOutturn * 100) / 100,
       totalPurchasesBilled: totPurchases,
       totalSalesBilled: totSales,
-      totalBilledAmount: totPurchases + totSales,
+      totalPartyBillsBilled: totPartyBills,
+      totalAdjustmentNet: totAdj,
+      totalBilledAmount: totPurchases + totPartyBills - totSales,
       totalTcsDeducted: totTcs,
       totalTdsDeducted: totTds,
       totalPaid: totPaid,
       totalReceived: totRecv,
-      netPayable: totPurchases - totSales - totPaid + totRecv
+      netPayable: totPurchases + totPartyBills - totSales - totPaid + totRecv + totAdj
     };
 
     return {
@@ -466,7 +481,9 @@ function mockBrowserFallback(action, payload) {
       payments: pays,
       commitments: store.commitments.filter(c => c.supplierId === payload.id),
       epTransfers: epTrfs,
-      washes: store.commitmentWashes.filter(w => w.supplierId === payload.id)
+      washes: store.commitmentWashes.filter(w => w.supplierId === payload.id),
+      partyBills: bills.reverse(),
+      balanceAdjustments: adjs.reverse()
     };
   }
 
@@ -475,6 +492,97 @@ function mockBrowserFallback(action, payload) {
   if (action === 'commitments:get') return store.commitments;
   if (action === 'settlements:get') return store.settlements;
   if (action === 'payments:get') return store.payments;
+  if (action === 'party-bills:get') {
+    let list = (store.partyBills || []).slice();
+    if (payload?.supplierId) list = list.filter(b => b.supplierId === payload.supplierId);
+    return list.reverse();
+  }
+  if (action === 'party-bills:add') {
+    const id = 'bill_' + Date.now();
+    const count = (store.partyBills || []).length + 1;
+    const billNo = payload.billNo || ('BILL-' + String(count).padStart(4, '0'));
+    const amount = Number(payload.amount) || 0;
+    const tdsRate = Number(payload.tdsRate) || 0;
+    const tdsAmount = payload.tdsAmount !== undefined ? Number(payload.tdsAmount) : (tdsRate > 0 ? Math.round((amount * (tdsRate / 100)) * 100) / 100 : 0);
+    const netAmount = payload.netAmount !== undefined ? Number(payload.netAmount) : Math.round((amount - tdsAmount) * 100) / 100;
+    const newBill = {
+      id,
+      billNo,
+      date: payload.date || new Date().toISOString().split('T')[0],
+      supplierId: payload.supplierId,
+      supplierName: payload.supplierName,
+      billCategory: payload.billCategory || 'salary',
+      particulars: payload.particulars || 'Service/Expense Bill',
+      amount,
+      tdsRate,
+      tdsAmount,
+      netAmount,
+      notes: payload.notes || '',
+      createdAt: new Date().toISOString()
+    };
+    if (!store.partyBills) store.partyBills = [];
+    store.partyBills.push(newBill);
+    saveBrowserStore(store);
+    return newBill;
+  }
+  if (action === 'party-bills:update') {
+    if (!store.partyBills) store.partyBills = [];
+    const idx = store.partyBills.findIndex(b => b.id === payload.id);
+    if (idx !== -1) {
+      store.partyBills[idx] = { ...store.partyBills[idx], ...payload.data };
+      saveBrowserStore(store);
+      return store.partyBills[idx];
+    }
+    return null;
+  }
+  if (action === 'party-bills:delete') {
+    if (!store.partyBills) store.partyBills = [];
+    store.partyBills = store.partyBills.filter(b => b.id !== payload.id);
+    saveBrowserStore(store);
+    return { success: true };
+  }
+  if (action === 'balance-adjustments:get') {
+    let list = (store.balanceAdjustments || []).slice();
+    if (payload?.supplierId) list = list.filter(a => a.supplierId === payload.supplierId);
+    return list.reverse();
+  }
+  if (action === 'balance-adjustments:add') {
+    const id = 'adj_' + Date.now();
+    const count = (store.balanceAdjustments || []).length + 1;
+    const adjustmentNo = payload.adjustmentNo || ('ADJ-' + String(count).padStart(4, '0'));
+    const newAdj = {
+      id,
+      adjustmentNo,
+      date: payload.date || new Date().toISOString().split('T')[0],
+      supplierId: payload.supplierId,
+      supplierName: payload.supplierName,
+      type: payload.type || 'debit',
+      amount: Number(payload.amount) || 0,
+      reason: payload.reason || 'Balance Adjustment',
+      notes: payload.notes || '',
+      createdAt: new Date().toISOString()
+    };
+    if (!store.balanceAdjustments) store.balanceAdjustments = [];
+    store.balanceAdjustments.push(newAdj);
+    saveBrowserStore(store);
+    return newAdj;
+  }
+  if (action === 'balance-adjustments:update') {
+    if (!store.balanceAdjustments) store.balanceAdjustments = [];
+    const idx = store.balanceAdjustments.findIndex(a => a.id === payload.id);
+    if (idx !== -1) {
+      store.balanceAdjustments[idx] = { ...store.balanceAdjustments[idx], ...payload.data };
+      saveBrowserStore(store);
+      return store.balanceAdjustments[idx];
+    }
+    return null;
+  }
+  if (action === 'balance-adjustments:delete') {
+    if (!store.balanceAdjustments) store.balanceAdjustments = [];
+    store.balanceAdjustments = store.balanceAdjustments.filter(a => a.id !== payload.id);
+    saveBrowserStore(store);
+    return { success: true };
+  }
   if (action === 'ep-transfers:get') return store.epTransfers;
   if (action === 'commitments:get-washes') return store.commitmentWashes;
   if (action === 'commitments:close') {

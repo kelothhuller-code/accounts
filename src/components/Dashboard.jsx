@@ -26,7 +26,9 @@ import {
   Calendar,
   Box,
   Sliders,
-  FileText
+  FileText,
+  RotateCcw,
+  ShieldCheck
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 import { exportToCsv } from '../utils/exportCsv';
@@ -77,6 +79,10 @@ export default function Dashboard({
   const [dispatches, setDispatches] = useState([]);
   const [openingEntries, setOpeningEntries] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [settlements, setSettlements] = useState([]);
+  const [customEpRate, setCustomEpRate] = useState('');
+  const [positionPartyFilter, setPositionPartyFilter] = useState('all'); // 'all', 'debtors', 'creditors'
+  const [positionSearchTerm, setPositionSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -128,10 +134,11 @@ export default function Dashboard({
         dbAction('arrivals:get'),
         dbAction('dispatches:get'),
         dbAction('stock:get-entries'),
-        dbAction('settings:get')
+        dbAction('settings:get'),
+        dbAction('settlements:get')
       ]);
 
-      const [mets, ins, prods, sups, pays, comms, stockSum, arrs, disps, entries, sets] = 
+      const [mets, ins, prods, sups, pays, comms, stockSum, arrs, disps, entries, sets, stlmnts] = 
         results.map(r => r.status === 'fulfilled' ? r.value : null);
 
       if (mets) setMetrics(mets);
@@ -145,6 +152,7 @@ export default function Dashboard({
       if (disps) setDispatches(disps || []);
       if (entries) setOpeningEntries(entries || []);
       if (sets) setSettings(sets || null);
+      if (stlmnts) setSettlements(stlmnts || []);
     } catch (e) {
       console.error('Error loading dashboard data:', e);
     } finally {
@@ -461,6 +469,241 @@ export default function Dashboard({
     return calculatedInsight;
   }, [insight, calculatedInsight]);
 
+  // COMPANY POSITION CALCULATION
+  // Formula: All Owed to Us - All We Owe + (Total Arrival EP including adjusted godown stock - Total EP Dispatch - Total Store In + Total Store Out) * Average EP Buying Rate of the Week
+  const companyPositionData = useMemo(() => {
+    // 1. Financial Ledger Balances: All Owed to Us minus All We Owe
+    let allOwedToUs = 0; // Parties that owe us (netPayable < 0, Dr)
+    let allWeOwe = 0;    // Parties we owe (netPayable > 0, Cr)
+    const partyList = [];
+
+    (suppliers || []).forEach(sup => {
+      const net = Number(sup.netPayable) || 0;
+      if (net < 0) {
+        allOwedToUs += Math.abs(net);
+        partyList.push({ ...sup, balanceType: 'debtor', amount: Math.abs(net), label: 'Owes Us (Dr)' });
+      } else if (net > 0) {
+        allWeOwe += net;
+        partyList.push({ ...sup, balanceType: 'creditor', amount: net, label: 'We Owe (Cr)' });
+      } else {
+        partyList.push({ ...sup, balanceType: 'settled', amount: 0, label: 'Settled (₹0)' });
+      }
+    });
+
+    const netLedgerDifference = allOwedToUs - allWeOwe;
+
+    // 2. Physical Stock: (Total Arrival EP including adjusted godown stock - Total EP Dispatch - Total Store In + Total Store Out)
+    const openStock = settings?.openingStock || { coffeeBags: 0, coffeeWeight: 0, coffeeEP: 0, huskBags: 0, huskWeight: 0 };
+    let godownOpenStockEP = 0;
+    let stockAdjustmentsEP = 0;
+
+    (openingEntries || []).forEach(entry => {
+      if (isSecItem(entry)) return;
+      const isAdj = entry.isAdjustment || 
+        (entry.supplierName && entry.supplierName.toLowerCase().includes('stock adjustment')) || 
+        (entry.notes && entry.notes.toLowerCase().includes('adjustment'));
+      const ep = Number(entry.endProductWeight !== undefined ? entry.endProductWeight : entry.weight) || 0;
+      if (isAdj) {
+        stockAdjustmentsEP += ep;
+      } else {
+        godownOpenStockEP += ep;
+      }
+    });
+
+    if (godownOpenStockEP === 0 && ((Number(openStock.coffeeEP) || 0) > 0 || (Number(openStock.coffeeBags) || 0) > 0)) {
+      const b = Number(openStock.coffeeBags) || 0;
+      godownOpenStockEP = (Number(openStock.coffeeEP) || 0) > 0 ? Number(openStock.coffeeEP) : (b * 26);
+    }
+
+    const adjustedGodownStockEP = godownOpenStockEP + stockAdjustmentsEP;
+
+    // Arrivals (Primary Commodity)
+    let totalArrivalEP = 0;
+    let totalArrivalBags = 0;
+    let totalStoreInEP = 0;
+
+    (arrivals || []).forEach(arr => {
+      if (isSecItem(arr)) return;
+      const ep = Number(arr.endProductWeight) || 0;
+      const bags = Number(arr.bags) || 0;
+      totalArrivalEP += ep;
+      totalArrivalBags += bags;
+
+      if (arr.status === 'storage' || arr.status === 'partial_settled' || arr.rateType === 'storage' || arr.rateType === 'storage_in') {
+        const remEP = arr.remainingEndProduct !== undefined ? Number(arr.remainingEndProduct) : ep;
+        totalStoreInEP += remEP;
+      }
+    });
+
+    // Total Arrival EP including adjusted godown stock
+    const totalArrivalEPWithGodown = totalArrivalEP + adjustedGodownStockEP;
+
+    // Dispatches (Primary Commodity)
+    let totalDispatchEP = 0;
+    let totalDispatchBags = 0;
+    let totalStoreOutEP = 0;
+
+    (dispatches || []).forEach(d => {
+      if (isSecItem(d)) return;
+      const ep = Number(d.endProductWeight) || Number(d.weight) || 0;
+      const bags = Number(d.bags) || 0;
+      totalDispatchEP += ep;
+      totalDispatchBags += bags;
+
+      if (d.status === 'storage_out' || d.rateType === 'storage_out') {
+        const remEP = d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : ep;
+        totalStoreOutEP += remEP;
+      }
+    });
+
+    // Net Available Company-Owned EP Stock
+    const netCompanyStockEP = totalArrivalEPWithGodown - totalDispatchEP - totalStoreInEP + totalStoreOutEP;
+
+    // 3. Average EP Buying Rate of the Week
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 is Sunday
+    const diffToMonday = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diffToMonday);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    const toYMD = (d) => d.toISOString().split('T')[0];
+    const monStr = toYMD(monday);
+    const sunStr = toYMD(sunday);
+
+    let weekPurchases = [];
+    let weekTotalTaxable = 0;
+    let weekTotalEP = 0;
+
+    (arrivals || []).forEach(arr => {
+      if (!arr.date || arr.date < monStr || arr.date > sunStr) return;
+      if (isSecItem(arr)) return;
+      const rate = Number(arr.rate) || 0;
+      const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * rate) || 0;
+      const ep = Number(arr.endProductWeight) || 0;
+      if (taxable > 0 && ep > 0) {
+        weekTotalTaxable += taxable;
+        weekTotalEP += ep;
+        weekPurchases.push({
+          id: arr.id,
+          type: arr.billType === 'cash_bill' ? 'Cash Purchase' : 'Purchase Bill',
+          ref: arr.arrivalNo,
+          date: arr.date,
+          party: arr.supplierName,
+          product: arr.product,
+          bags: arr.bags,
+          weight: arr.weight,
+          ep,
+          taxable,
+          effectiveRate: Math.round((taxable / ep) * 100) / 100
+        });
+      }
+    });
+
+    (settlements || []).forEach(st => {
+      if (!st.date || st.date < monStr || st.date > sunStr) return;
+      if (st.settlementCategory === 'sales_storage') return;
+      const gross = Number(st.settlementGrossAmount) || (Number(st.settledEndProduct) * Number(st.settlementRate)) || 0;
+      const ep = Number(st.settledEndProduct) || 0;
+      if (gross > 0 && ep > 0) {
+        weekTotalTaxable += gross;
+        weekTotalEP += ep;
+        weekPurchases.push({
+          id: st.id,
+          type: 'Storage Settlement',
+          ref: st.settlementNo,
+          date: st.date,
+          party: st.supplierName,
+          product: st.product || 'Settled Stored Coffee',
+          bags: st.settledBags,
+          weight: st.settledWeight || (st.settledBags * 50),
+          ep,
+          taxable: gross,
+          effectiveRate: Math.round((gross / ep) * 100) / 100
+        });
+      }
+    });
+
+    let autoWeeklyRate = 0;
+    if (weekTotalEP > 0) {
+      autoWeeklyRate = Math.round((weekTotalTaxable / weekTotalEP) * 100) / 100;
+    } else {
+      // Fallback: all-time weighted average purchase rate
+      let allTaxable = 0;
+      let allEP = 0;
+      (arrivals || []).forEach(arr => {
+        if (isSecItem(arr)) return;
+        const rate = Number(arr.rate) || 0;
+        const taxable = Number(arr.taxableAmount) || (Number(arr.weight) * rate) || 0;
+        const ep = Number(arr.endProductWeight) || 0;
+        if (taxable > 0 && ep > 0) {
+          allTaxable += taxable;
+          allEP += ep;
+        }
+      });
+      if (allEP > 0) {
+        autoWeeklyRate = Math.round((allTaxable / allEP) * 100) / 100;
+      } else {
+        const activeComm = (commitments || []).find(c => (c.category === 'purchase' || !c.category) && Number(c.rate) > 0);
+        if (activeComm) autoWeeklyRate = Number(activeComm.rate);
+      }
+    }
+
+    const effectiveRate = (customEpRate !== '' && !isNaN(Number(customEpRate))) ? Number(customEpRate) : autoWeeklyRate;
+    const stockValuation = Math.round(netCompanyStockEP * effectiveRate * 100) / 100;
+    const companyPosition = Math.round((netLedgerDifference + stockValuation) * 100) / 100;
+
+    return {
+      allOwedToUs: Math.round(allOwedToUs * 100) / 100,
+      allWeOwe: Math.round(allWeOwe * 100) / 100,
+      netLedgerDifference: Math.round(netLedgerDifference * 100) / 100,
+      godownOpenStockEP: Math.round(godownOpenStockEP * 100) / 100,
+      stockAdjustmentsEP: Math.round(stockAdjustmentsEP * 100) / 100,
+      adjustedGodownStockEP: Math.round(adjustedGodownStockEP * 100) / 100,
+      totalArrivalEP: Math.round(totalArrivalEP * 100) / 100,
+      totalArrivalEPWithGodown: Math.round(totalArrivalEPWithGodown * 100) / 100,
+      totalDispatchEP: Math.round(totalDispatchEP * 100) / 100,
+      totalStoreInEP: Math.round(totalStoreInEP * 100) / 100,
+      totalStoreOutEP: Math.round(totalStoreOutEP * 100) / 100,
+      netCompanyStockEP: Math.round(netCompanyStockEP * 100) / 100,
+      autoWeeklyRate,
+      effectiveRate,
+      stockValuation,
+      companyPosition,
+      weekRangeStr: `${monStr} to ${sunStr}`,
+      weekPurchases,
+      weekTotalEP,
+      weekTotalTaxable,
+      hasWeeklyData: weekTotalEP > 0,
+      partyList
+    };
+  }, [suppliers, arrivals, dispatches, settlements, openingEntries, settings, commitments, customEpRate, products]);
+
+  const handleExportCompanyPosition = () => {
+    if (!companyPositionData) return;
+    const cp = companyPositionData;
+    const rows = [
+      { Section: 'EXECUTIVE COMPANY POSITION', Metric: 'Total Net Position', Value: `₹${cp.companyPosition.toLocaleString()}`, Unit: 'INR', Notes: 'Calculated as (Receivables - Payables) + Stock Valuation' },
+      { Section: 'FINANCIAL BALANCES', Metric: 'All Owed To Us (Receivables / Debtors)', Value: `₹${cp.allOwedToUs.toLocaleString()}`, Unit: 'INR', Notes: 'Parties with Debit balances' },
+      { Section: 'FINANCIAL BALANCES', Metric: 'All We Owe (Payables / Creditors)', Value: `₹${cp.allWeOwe.toLocaleString()}`, Unit: 'INR', Notes: 'Parties with Credit balances' },
+      { Section: 'FINANCIAL BALANCES', Metric: 'Net Financial Ledger Difference', Value: `₹${cp.netLedgerDifference.toLocaleString()}`, Unit: 'INR', Notes: 'Owed To Us minus All We Owe' },
+      { Section: 'COMMODITY STOCK', Metric: 'Arrival EP (Inward)', Value: cp.totalArrivalEP.toLocaleString(), Unit: 'kg EP', Notes: 'Primary Commodities' },
+      { Section: 'COMMODITY STOCK', Metric: 'Adjusted Godown Stock', Value: cp.adjustedGodownStockEP.toLocaleString(), Unit: 'kg EP', Notes: `Opening: ${cp.godownOpenStockEP} kg | Adjustments: ${cp.stockAdjustmentsEP} kg` },
+      { Section: 'COMMODITY STOCK', Metric: 'Total Arrival EP Incl Godown', Value: cp.totalArrivalEPWithGodown.toLocaleString(), Unit: 'kg EP', Notes: 'Arrivals + Adjusted Godown' },
+      { Section: 'COMMODITY STOCK', Metric: 'Total EP Dispatch', Value: cp.totalDispatchEP.toLocaleString(), Unit: 'kg EP', Notes: 'Dispatched Sales' },
+      { Section: 'COMMODITY STOCK', Metric: 'Total Store In (Party Stored)', Value: cp.totalStoreInEP.toLocaleString(), Unit: 'kg EP', Notes: 'Party storage stock inward' },
+      { Section: 'COMMODITY STOCK', Metric: 'Total Store Out (Party Storage Released)', Value: cp.totalStoreOutEP.toLocaleString(), Unit: 'kg EP', Notes: 'Party storage stock released' },
+      { Section: 'COMMODITY STOCK', Metric: 'Net Company-Owned EP Stock', Value: cp.netCompanyStockEP.toLocaleString(), Unit: 'kg EP', Notes: 'Arrivals + Godown - Dispatch - StoreIn + StoreOut' },
+      { Section: 'STOCK VALUATION', Metric: 'Average EP Buying Rate of Week', Value: `₹${cp.effectiveRate}/kg`, Unit: 'INR/kg', Notes: `Week of ${cp.weekRangeStr} (${cp.hasWeeklyData ? 'Weekly Auto Rate' : 'Fallback / Override'})` },
+      { Section: 'STOCK VALUATION', Metric: 'Total Company Stock Valuation', Value: `₹${cp.stockValuation.toLocaleString()}`, Unit: 'INR', Notes: 'Net Stock * Weekly Buying Rate' }
+    ];
+
+    exportToCsv(rows, `Company_Position_Statement_${new Date().toISOString().split('T')[0]}`);
+  };
+
   const handleExportDashboardSummary = () => {
     const m = effectiveInsight?.main || effectiveInsight || {};
     const s = effectiveInsight?.secondary || {};
@@ -651,6 +894,20 @@ export default function Dashboard({
             onClick={() => setActiveSubTab('financials')}
           >
             <CreditCard size={14} /> Financials, Payments & Tax Ledger
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: activeSubTab === 'company_position' ? 'linear-gradient(135deg, #059669, #047857)' : 'rgba(255,255,255,0.08)',
+              color: '#fff',
+              border: activeSubTab === 'company_position' ? '1px solid #34d399' : 'none',
+              fontWeight: 700,
+              fontSize: '0.8rem',
+              padding: '0.45rem 0.85rem'
+            }}
+            onClick={() => setActiveSubTab('company_position')}
+          >
+            <Building size={14} /> 🏢 Company Position
           </button>
 
           {/* Date Selector */}
@@ -909,6 +1166,90 @@ export default function Dashboard({
       {/* TAB 1: EXECUTIVE ANALYTICS & VISUAL GRAPHS */}
       {activeSubTab === 'overview' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          
+          {/* COMPANY NET POSITION HERO CARD */}
+          <div style={{
+            background: companyPositionData.companyPosition >= 0 
+              ? 'linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)' 
+              : 'linear-gradient(135deg, #7f1d1d 0%, #991b1b 50%, #b91c1c 100%)',
+            color: '#ffffff',
+            borderRadius: '14px',
+            padding: '1.25rem 1.5rem',
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)',
+            border: companyPositionData.companyPosition >= 0 ? '1px solid rgba(52, 211, 153, 0.35)' : '1px solid rgba(248, 113, 113, 0.35)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '1rem'
+          }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{ fontSize: '1.4rem' }}>🏢</span>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 900, letterSpacing: '-0.02em', color: '#ffffff' }}>
+                      Company Position: ₹{companyPositionData.companyPosition.toLocaleString()}
+                    </h2>
+                    <span style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      padding: '0.2rem 0.6rem',
+                      borderRadius: '9999px',
+                      background: companyPositionData.companyPosition >= 0 ? 'rgba(52, 211, 153, 0.25)' : 'rgba(248, 113, 113, 0.25)',
+                      color: companyPositionData.companyPosition >= 0 ? '#6ee7b7' : '#fca5a5',
+                      border: companyPositionData.companyPosition >= 0 ? '1px solid #34d399' : '1px solid #f87171'
+                    }}>
+                      {companyPositionData.companyPosition >= 0 ? '🟢 Positive Net Position' : '🔴 Deficit Position'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.76rem', color: '#cbd5e1', marginTop: '0.25rem' }}>
+                    Formula: (All Owed To Us - All We Owe) + [(Arrival EP + Adjusted Godown Stock - Dispatch EP - Store In + Store Out) × Weekly Avg Buying Rate]
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.85rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '0.35rem 0.75rem', borderRadius: '8px' }}>
+                  <span style={{ color: '#cbd5e1' }}>Net Ledger Balances: </span>
+                  <strong style={{ color: companyPositionData.netLedgerDifference >= 0 ? '#86efac' : '#fca5a5' }}>
+                    ₹{companyPositionData.netLedgerDifference.toLocaleString()}
+                  </strong>
+                  <span style={{ fontSize: '0.72rem', color: '#94a3b8', marginLeft: '0.4rem' }}>
+                    (Owed to Us: ₹{companyPositionData.allOwedToUs.toLocaleString()} | We Owe: ₹{companyPositionData.allWeOwe.toLocaleString()})
+                  </span>
+                </div>
+
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '0.35rem 0.75rem', borderRadius: '8px' }}>
+                  <span style={{ color: '#cbd5e1' }}>Valued Physical Stock: </span>
+                  <strong style={{ color: '#fde047' }}>
+                    ₹{companyPositionData.stockValuation.toLocaleString()}
+                  </strong>
+                  <span style={{ fontSize: '0.72rem', color: '#94a3b8', marginLeft: '0.4rem' }}>
+                    ({companyPositionData.netCompanyStockEP.toLocaleString()} kg EP @ ₹{companyPositionData.effectiveRate}/kg)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button
+                className="btn btn-sm"
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  color: '#ffffff',
+                  border: '1px solid rgba(255,255,255,0.4)',
+                  fontWeight: 700,
+                  fontSize: '0.82rem',
+                  padding: '0.55rem 0.95rem',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                }}
+                onClick={() => setActiveSubTab('company_position')}
+              >
+                🏢 Open Full Company Position Screen <ChevronRight size={15} />
+              </button>
+            </div>
+          </div>
           
           {/* PRIMARY VS SECONDARY COMMODITY OVERVIEW BANNER */}
           {effectiveInsight && (() => {
@@ -2066,6 +2407,473 @@ export default function Dashboard({
           </div>
         </div>
       )}
+
+      {/* SUBTAB 7: COMPANY POSITION SCREEN */}
+      {activeSubTab === 'company_position' && (() => {
+        const cp = companyPositionData;
+        const filteredParties = (cp.partyList || []).filter(p => {
+          if (positionPartyFilter === 'debtors' && p.balanceType !== 'debtor') return false;
+          if (positionPartyFilter === 'creditors' && p.balanceType !== 'creditor') return false;
+          if (positionSearchTerm.trim()) {
+            const q = positionSearchTerm.toLowerCase();
+            return (p.name && p.name.toLowerCase().includes(q)) ||
+                   (p.place && p.place.toLowerCase().includes(q)) ||
+                   (p.phone && p.phone.toLowerCase().includes(q));
+          }
+          return true;
+        });
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.35rem' }}>
+            {/* Header & Formula Banner */}
+            <div style={{
+              background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+              color: '#ffffff',
+              borderRadius: '14px',
+              padding: '1.4rem 1.6rem',
+              boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.25)',
+              border: '1px solid #334155'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                    <span style={{ fontSize: '1.6rem' }}>🏢</span>
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#f8fafc', letterSpacing: '-0.02em' }}>
+                        Company Position Dashboard
+                      </h2>
+                      <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '0.2rem' }}>
+                        Executive net valuation computed strictly as financial receivables minus payables plus company-owned inventory at weekly buying rate.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ background: '#059669', borderColor: '#10b981', fontWeight: 700 }}
+                    onClick={handleExportCompanyPosition}
+                  >
+                    <Download size={14} /> Export Position Sheet (CSV)
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={loadDashboardData}
+                    title="Refresh Live Data"
+                  >
+                    <RefreshCw size={14} /> Refresh
+                  </button>
+                </div>
+              </div>
+
+              {/* LIVE FORMULA EVALUATION BLOCK */}
+              <div style={{
+                marginTop: '1.25rem',
+                background: 'rgba(15, 23, 42, 0.75)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                borderRadius: '10px',
+                padding: '1rem 1.25rem'
+              }}>
+                <div style={{ fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#38bdf8', fontWeight: 800, marginBottom: '0.5rem' }}>
+                  Live Mathematical Formula & Value Substitution
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.6rem', fontSize: '0.9rem', fontFamily: 'var(--font-mono, monospace)' }}>
+                  <div style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px solid #3b82f6', borderRadius: '6px', padding: '0.35rem 0.65rem', color: '#93c5fd' }}>
+                    (All Owed ₹{cp.allOwedToUs.toLocaleString()} − All We Owe ₹{cp.allWeOwe.toLocaleString()}) = <strong>₹{cp.netLedgerDifference.toLocaleString()}</strong>
+                  </div>
+                  <span style={{ color: '#94a3b8', fontWeight: 700 }}>+</span>
+                  <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', borderRadius: '6px', padding: '0.35rem 0.65rem', color: '#a7f3d0' }}>
+                    (Arrival EP {cp.totalArrivalEPWithGodown.toLocaleString()} kg − Dispatch {cp.totalDispatchEP.toLocaleString()} kg − StoreIn {cp.totalStoreInEP.toLocaleString()} kg + StoreOut {cp.totalStoreOutEP.toLocaleString()} kg) = <strong>{cp.netCompanyStockEP.toLocaleString()} kg EP</strong>
+                  </div>
+                  <span style={{ color: '#94a3b8', fontWeight: 700 }}>×</span>
+                  <div style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid #f59e0b', borderRadius: '6px', padding: '0.35rem 0.65rem', color: '#fde68a' }}>
+                    Avg EP Buying Rate: <strong>₹{cp.effectiveRate}/kg</strong>
+                  </div>
+                  <span style={{ color: '#94a3b8', fontWeight: 700 }}>=</span>
+                  <div style={{
+                    background: cp.companyPosition >= 0 ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.25)',
+                    border: cp.companyPosition >= 0 ? '1px solid #22c55e' : '1px solid #ef4444',
+                    borderRadius: '6px',
+                    padding: '0.4rem 0.85rem',
+                    color: cp.companyPosition >= 0 ? '#4ade80' : '#f87171',
+                    fontWeight: 900,
+                    fontSize: '1.05rem'
+                  }}>
+                    Net Position: ₹{cp.companyPosition.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 6 High-Performance Metric KPI Cards */}
+            <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+              {/* Card 1: Final Net Position */}
+              <div className="metric-box" style={{
+                background: cp.companyPosition >= 0 ? '#f0fdf4' : '#fef2f2',
+                borderColor: cp.companyPosition >= 0 ? '#86efac' : '#fca5a5',
+                borderLeft: `4px solid ${cp.companyPosition >= 0 ? '#10b981' : '#ef4444'}`
+              }}>
+                <span className="metric-label" style={{ color: cp.companyPosition >= 0 ? '#166534' : '#991b1b', fontWeight: 800 }}>
+                  🏢 Final Company Position
+                </span>
+                <span className="metric-value" style={{ color: cp.companyPosition >= 0 ? '#059669' : '#dc2626', fontSize: '1.4rem' }}>
+                  ₹{cp.companyPosition.toLocaleString()}
+                </span>
+                <span className="metric-sub" style={{ fontWeight: 700, color: cp.companyPosition >= 0 ? '#059669' : '#dc2626' }}>
+                  {cp.companyPosition >= 0 ? '🟢 Net Asset / Surplus' : '🔴 Net Deficit Position'}
+                </span>
+              </div>
+
+              {/* Card 2: All Owed to Us (Receivables) */}
+              <div className="metric-box success">
+                <span className="metric-label">All Owed to Us (Receivables)</span>
+                <span className="metric-value" style={{ color: '#059669' }}>
+                  ₹{cp.allOwedToUs.toLocaleString()}
+                </span>
+                <span className="metric-sub">Parties with Debit balance</span>
+              </div>
+
+              {/* Card 3: All We Owe (Payables) */}
+              <div className="metric-box danger">
+                <span className="metric-label">All We Owe (Payables)</span>
+                <span className="metric-value" style={{ color: '#dc2626' }}>
+                  ₹{cp.allWeOwe.toLocaleString()}
+                </span>
+                <span className="metric-sub">Parties with Credit balance</span>
+              </div>
+
+              {/* Card 4: Net Company Stock */}
+              <div className="metric-box" style={{ background: '#f8fafc', borderColor: '#cbd5e1' }}>
+                <span className="metric-label">Company-Owned EP Stock</span>
+                <span className="metric-value" style={{ color: cp.netCompanyStockEP >= 0 ? '#0f172a' : '#dc2626' }}>
+                  {cp.netCompanyStockEP.toLocaleString()} kg
+                </span>
+                <span className="metric-sub">Arrival + Godown − Disp − StoreIn + StoreOut</span>
+              </div>
+
+              {/* Card 5: Weekly EP Buying Rate */}
+              <div className="metric-box coffee">
+                <span className="metric-label">Avg EP Buying Rate (Week)</span>
+                <span className="metric-value" style={{ color: '#7c2d12' }}>
+                  ₹{cp.effectiveRate} <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>/kg EP</span>
+                </span>
+                <span className="metric-sub">
+                  {cp.hasWeeklyData ? `Auto from ${cp.weekPurchases.length} purchases` : 'Fallback / Custom rate'}
+                </span>
+              </div>
+
+              {/* Card 6: Physical Stock Valuation */}
+              <div className="metric-box" style={{ background: '#fefce8', borderColor: '#fef08a', borderLeft: '4px solid #eab308' }}>
+                <span className="metric-label" style={{ color: '#854d0e', fontWeight: 800 }}>Valued Stock</span>
+                <span className="metric-value" style={{ color: '#a16207' }}>
+                  ₹{cp.stockValuation.toLocaleString()}
+                </span>
+                <span className="metric-sub">{cp.netCompanyStockEP.toLocaleString()} kg × ₹{cp.effectiveRate}</span>
+              </div>
+            </div>
+
+            {/* Weekly Rate Control & Adjustment Bar */}
+            <div style={{
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              padding: '0.9rem 1.25rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ background: '#fef3c7', padding: '0.45rem', borderRadius: '8px', color: '#b45309' }}>
+                  <Scale size={20} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
+                    Weekly EP Buying Rate Valuation Setting: <strong style={{ color: '#b45309' }}>₹{cp.effectiveRate}/kg EP</strong>
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                    Current Week: <strong>{cp.weekRangeStr}</strong> ({cp.weekPurchases.length} purchase transaction{cp.weekPurchases.length === 1 ? '' : 's'} recorded). {cp.hasWeeklyData ? `Weighted average: ₹${cp.autoWeeklyRate}/kg EP.` : `No purchases yet this week. Falling back to base average ₹${cp.autoWeeklyRate}/kg EP.`}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>Rate Override (₹/kg):</span>
+                <input
+                  type="number"
+                  step="any"
+                  placeholder={`Auto (${cp.autoWeeklyRate})`}
+                  value={customEpRate}
+                  onChange={e => setCustomEpRate(e.target.value)}
+                  style={{
+                    width: '130px',
+                    padding: '0.35rem 0.6rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    fontSize: '0.85rem',
+                    fontWeight: 700
+                  }}
+                />
+                {customEpRate !== '' && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.75rem', padding: '0.35rem 0.6rem' }}
+                    onClick={() => setCustomEpRate('')}
+                    title="Reset to calculated weekly automatic rate"
+                  >
+                    <RotateCcw size={13} /> Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* TWO-COLUMN DEEP DIVE PANELS */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.05fr 0.95fr', gap: '1.25rem' }}>
+              
+              {/* LEFT PANEL: Party Ledger Balances (All Owed To Us vs All We Owe) */}
+              <div style={{
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                padding: '1.1rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.75rem',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                      <CreditCard size={16} color="#2563eb" /> Party Accounts Ledger Balances
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                      Net: <strong>₹{cp.netLedgerDifference.toLocaleString()}</strong> (Receivables: ₹{cp.allOwedToUs.toLocaleString()} − Payables: ₹{cp.allWeOwe.toLocaleString()})
+                    </div>
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div style={{ display: 'flex', gap: '0.25rem' }}>
+                    <button
+                      className={`btn btn-xs ${positionPartyFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => setPositionPartyFilter('all')}
+                    >
+                      All ({cp.partyList.length})
+                    </button>
+                    <button
+                      className={`btn btn-xs ${positionPartyFilter === 'debtors' ? 'btn-success' : 'btn-secondary'}`}
+                      style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => setPositionPartyFilter('debtors')}
+                    >
+                      Owes Us ({(cp.partyList.filter(p => p.balanceType === 'debtor')).length})
+                    </button>
+                    <button
+                      className={`btn btn-xs ${positionPartyFilter === 'creditors' ? 'btn-danger' : 'btn-secondary'}`}
+                      style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                      onClick={() => setPositionPartyFilter('creditors')}
+                    >
+                      We Owe ({(cp.partyList.filter(p => p.balanceType === 'creditor')).length})
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#f8fafc', border: '1px solid #cbd5e1', padding: '0.35rem 0.65rem', borderRadius: '6px' }}>
+                  <Search size={14} color="#64748b" />
+                  <input
+                    type="text"
+                    placeholder="Search party by name, place or phone..."
+                    value={positionSearchTerm}
+                    onChange={e => setPositionSearchTerm(e.target.value)}
+                    style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', fontSize: '0.8rem' }}
+                  />
+                  {positionSearchTerm && (
+                    <X size={14} color="#94a3b8" style={{ cursor: 'pointer' }} onClick={() => setPositionSearchTerm('')} />
+                  )}
+                </div>
+
+                {/* Table */}
+                <div className="table-wrapper" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Party Name</th>
+                        <th>Place</th>
+                        <th>Status</th>
+                        <th className="num">Balance (₹)</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredParties.length === 0 ? (
+                        <tr><td colSpan="5" style={{ textAlign: 'center', padding: '1.75rem', color: '#64748b' }}>No party accounts match the filter.</td></tr>
+                      ) : (
+                        filteredParties.map(p => (
+                          <tr key={p.id}>
+                            <td style={{ fontWeight: 600 }}>
+                              <a
+                                href="#ledger"
+                                onClick={(e) => { e.preventDefault(); if (onSelectSupplier) onSelectSupplier(p.id); }}
+                                style={{ color: '#2563eb', textDecoration: 'none' }}
+                                title="Open Full Party Ledger"
+                              >
+                                {p.name}
+                              </a>
+                            </td>
+                            <td style={{ fontSize: '0.75rem', color: '#64748b' }}>{p.place || '-'}</td>
+                            <td>
+                              <span className={`badge ${p.balanceType === 'debtor' ? 'badge-green' : p.balanceType === 'creditor' ? 'badge-danger' : 'badge-gray'}`} style={{ fontSize: '0.68rem' }}>
+                                {p.label}
+                              </span>
+                            </td>
+                            <td className="num" style={{ fontWeight: 700, color: p.balanceType === 'debtor' ? '#059669' : p.balanceType === 'creditor' ? '#dc2626' : '#64748b' }}>
+                              ₹{p.amount.toLocaleString()}
+                            </td>
+                            <td>
+                              <button
+                                className="btn btn-secondary btn-xs"
+                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.45rem' }}
+                                onClick={() => onSelectSupplier && onSelectSupplier(p.id)}
+                              >
+                                <FileText size={12} /> Ledger
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* RIGHT PANEL: Physical Inventory Reconciliation & Weekly Purchases Audit */}
+              <div style={{
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                padding: '1.1rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.85rem',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+              }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <Box size={16} color="#059669" /> Physical Inventory Breakdown
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                    Reconciliation of Company-Owned End Product (EP) Stock
+                  </div>
+                </div>
+
+                {/* Stock Waterfall Table */}
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
+                  <table style={{ margin: 0 }}>
+                    <tbody>
+                      <tr style={{ background: '#f8fafc' }}>
+                        <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}>+ Inward Arrivals EP</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}>
+                          +{cp.totalArrivalEP.toLocaleString()} kg
+                        </td>
+                      </tr>
+                      <tr style={{ background: '#f8fafc' }}>
+                        <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}>+ Adjusted Godown Stock (Opening {cp.godownOpenStockEP.toLocaleString()} + Adj {cp.stockAdjustmentsEP.toLocaleString()})</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}>
+                          +{cp.adjustedGodownStockEP.toLocaleString()} kg
+                        </td>
+                      </tr>
+                      <tr style={{ background: '#eff6ff', borderTop: '1px solid #bfdbfe', borderBottom: '1px solid #bfdbfe' }}>
+                        <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.82rem', fontWeight: 700, color: '#1e40af' }}>
+                          = Total Arrival EP Incl. Adjusted Godown Stock
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 800, padding: '0.45rem 0.75rem', fontSize: '0.85rem', color: '#1e40af' }}>
+                          {cp.totalArrivalEPWithGodown.toLocaleString()} kg
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#dc2626' }}>− Total EP Dispatches (Outward Sales)</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#dc2626' }}>
+                          −{cp.totalDispatchEP.toLocaleString()} kg
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#9333ea' }}>− Total Store In (Supplier Stored Lots)</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#9333ea' }}>
+                          −{cp.totalStoreInEP.toLocaleString()} kg
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#059669' }}>+ Total Store Out (Party Storage Released)</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#059669' }}>
+                          +{cp.totalStoreOutEP.toLocaleString()} kg
+                        </td>
+                      </tr>
+                      <tr style={{ background: '#ecfdf5', borderTop: '2px solid #6ee7b7' }}>
+                        <td style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 800, color: '#065f46' }}>
+                          = Available Company-Owned EP Stock
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 900, padding: '0.6rem 0.75rem', fontSize: '0.95rem', color: '#059669' }}>
+                          {cp.netCompanyStockEP.toLocaleString()} kg EP
+                        </td>
+                      </tr>
+                      <tr style={{ background: '#fefce8', borderTop: '1px solid #fde047' }}>
+                        <td style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', fontWeight: 800, color: '#854d0e' }}>
+                          × Valued at Weekly Buying Rate (₹{cp.effectiveRate}/kg)
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 900, padding: '0.6rem 0.75rem', fontSize: '1rem', color: '#a16207' }}>
+                          = ₹{cp.stockValuation.toLocaleString()}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Audit: Weekly Purchases Table */}
+                <div style={{ marginTop: '0.35rem' }}>
+                  <div style={{ fontWeight: 800, fontSize: '0.85rem', color: '#0f172a', marginBottom: '0.35rem' }}>
+                    Purchases in Current Week ({cp.weekRangeStr})
+                  </div>
+                  <div className="table-wrapper" style={{ maxHeight: '180px', overflowY: 'auto' }}>
+                    <table style={{ fontSize: '0.75rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Ref #</th>
+                          <th>Date</th>
+                          <th>Party</th>
+                          <th className="num">EP (kg)</th>
+                          <th className="num">Amount (₹)</th>
+                          <th className="num">Rate (₹/kg)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cp.weekPurchases.length === 0 ? (
+                          <tr><td colSpan="6" style={{ textAlign: 'center', padding: '1rem', color: '#64748b' }}>No purchase arrivals or settlements in current week.</td></tr>
+                        ) : (
+                          cp.weekPurchases.map(w => (
+                            <tr key={w.id || w.ref}>
+                              <td style={{ fontWeight: 600 }}>{w.ref}</td>
+                              <td>{w.date}</td>
+                              <td>{w.party}</td>
+                              <td className="num">{w.ep.toLocaleString()}</td>
+                              <td className="num">₹{w.taxable.toLocaleString()}</td>
+                              <td className="num" style={{ fontWeight: 700, color: '#059669' }}>₹{w.effectiveRate}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

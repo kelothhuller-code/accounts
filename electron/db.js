@@ -52,6 +52,8 @@ let dbState = {
   commitments: [],
   settlements: [],
   payments: [],
+  partyBills: [],
+  balanceAdjustments: [],
   epTransfers: [],
   commitmentWashes: [],
   millingLogs: [],
@@ -93,6 +95,8 @@ function loadLocalDb() {
         commitments: loaded.commitments || [],
         settlements: loaded.settlements || [],
         payments: loaded.payments || [],
+        partyBills: loaded.partyBills || [],
+        balanceAdjustments: loaded.balanceAdjustments || [],
         epTransfers: loaded.epTransfers || [],
         commitmentWashes: loaded.commitmentWashes || [],
         millingLogs: loaded.millingLogs || [],
@@ -574,6 +578,39 @@ const PaymentSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 }, { strict: false });
 
+const PartyBillSchema = new mongoose.Schema({
+  id: { type: String, unique: true },
+  billNo: String,
+  date: String,
+  supplierId: String,
+  supplierName: String,
+  billCategory: String, // 'salary', 'service', 'transport', 'labour', 'rent', 'maintenance', 'other'
+  particulars: String,
+  amount: Number,
+  tdsRate: Number,
+  tdsAmount: Number,
+  netAmount: Number,
+  notes: String,
+  fy: String,
+  isLocked: Boolean,
+  createdAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+const BalanceAdjustmentSchema = new mongoose.Schema({
+  id: { type: String, unique: true },
+  adjustmentNo: String,
+  date: String,
+  supplierId: String,
+  supplierName: String,
+  type: String, // 'debit' | 'credit'
+  amount: Number,
+  reason: String,
+  notes: String,
+  fy: String,
+  isLocked: Boolean,
+  createdAt: { type: Date, default: Date.now }
+}, { strict: false });
+
 const EpTransferSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   transferNo: String,
@@ -717,7 +754,7 @@ try {
   console.warn('Index registration note:', idxErr.message);
 }
 
-let MongoSupplier, MongoArrival, MongoDispatch, MongoCommitment, MongoSettlement, MongoPayment, MongoEpTransfer, MongoCommitmentWash, MongoProduct, MongoMillingLog, MongoOpeningStockEntry, MongoProcessingProfile;
+let MongoSupplier, MongoArrival, MongoDispatch, MongoCommitment, MongoSettlement, MongoPayment, MongoEpTransfer, MongoCommitmentWash, MongoProduct, MongoMillingLog, MongoOpeningStockEntry, MongoProcessingProfile, MongoPartyBill, MongoBalanceAdjustment;
 
 try {
   MongoSupplier = mongoose.model('Supplier', SupplierSchema);
@@ -726,6 +763,8 @@ try {
   MongoCommitment = mongoose.model('Commitment', CommitmentSchema);
   MongoSettlement = mongoose.model('Settlement', SettlementSchema);
   MongoPayment = mongoose.model('Payment', PaymentSchema);
+  MongoPartyBill = mongoose.model('PartyBill', PartyBillSchema);
+  MongoBalanceAdjustment = mongoose.model('BalanceAdjustment', BalanceAdjustmentSchema);
   MongoEpTransfer = mongoose.model('EpTransfer', EpTransferSchema);
   MongoCommitmentWash = mongoose.model('CommitmentWash', CommitmentWashSchema);
   MongoProduct = mongoose.model('Product', ProductSchema);
@@ -1041,6 +1080,8 @@ function buildSupplierLookupMaps() {
   const dispatchesBySupplier = {};
   const settlementsBySupplier = {};
   const paymentsBySupplier = {};
+  const partyBillsBySupplier = {};
+  const adjustmentsBySupplier = {};
   const commitmentsBySupplier = {};
   const epTransfersBySupplier = {};
   const washesBySupplier = {};
@@ -1068,6 +1109,18 @@ function buildSupplierLookupMaps() {
     if (!p.supplierId) return;
     if (!paymentsBySupplier[p.supplierId]) paymentsBySupplier[p.supplierId] = [];
     paymentsBySupplier[p.supplierId].push(p);
+  });
+
+  (dbState.partyBills || []).forEach(b => {
+    if (!b.supplierId) return;
+    if (!partyBillsBySupplier[b.supplierId]) partyBillsBySupplier[b.supplierId] = [];
+    partyBillsBySupplier[b.supplierId].push(b);
+  });
+
+  (dbState.balanceAdjustments || []).forEach(a => {
+    if (!a.supplierId) return;
+    if (!adjustmentsBySupplier[a.supplierId]) adjustmentsBySupplier[a.supplierId] = [];
+    adjustmentsBySupplier[a.supplierId].push(a);
   });
 
   (dbState.commitments || []).forEach(c => {
@@ -1100,6 +1153,8 @@ function buildSupplierLookupMaps() {
     dispatchesBySupplier,
     settlementsBySupplier,
     paymentsBySupplier,
+    partyBillsBySupplier,
+    adjustmentsBySupplier,
     commitmentsBySupplier,
     epTransfersBySupplier,
     washesBySupplier
@@ -1115,6 +1170,8 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
   let dispatches = pregrouped ? (pregrouped.dispatchesBySupplier[supplierId] || []) : (dbState.dispatches || []).filter(d => d.supplierId === supplierId || d.partyId === supplierId);
   let settlements = pregrouped ? (pregrouped.settlementsBySupplier[supplierId] || []) : (dbState.settlements || []).filter(s => s.supplierId === supplierId);
   let payments = pregrouped ? (pregrouped.paymentsBySupplier[supplierId] || []) : (dbState.payments || []).filter(p => p.supplierId === supplierId);
+  let partyBills = pregrouped ? (pregrouped.partyBillsBySupplier[supplierId] || []) : (dbState.partyBills || []).filter(b => b.supplierId === supplierId);
+  let balanceAdjustments = pregrouped ? (pregrouped.adjustmentsBySupplier[supplierId] || []) : (dbState.balanceAdjustments || []).filter(a => a.supplierId === supplierId);
   let commitments = pregrouped ? (pregrouped.commitmentsBySupplier[supplierId] || []) : (dbState.commitments || []).filter(c => c.supplierId === supplierId || c.partyId === supplierId);
   let epTransfers = pregrouped ? (pregrouped.epTransfersBySupplier[supplierId] || []) : (dbState.epTransfers || []).filter(t => t.fromPartyId === supplierId || t.toPartyId === supplierId);
   let washes = pregrouped ? (pregrouped.washesBySupplier[supplierId] || []) : (dbState.commitmentWashes || []).filter(w => w.supplierId === supplierId || w.partyId === supplierId);
@@ -1124,6 +1181,8 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     dispatches = dispatches.filter(d => d.date <= maxDate);
     settlements = settlements.filter(s => s.date <= maxDate);
     payments = payments.filter(p => p.date <= maxDate);
+    partyBills = partyBills.filter(b => b.date <= maxDate);
+    balanceAdjustments = balanceAdjustments.filter(a => a.date <= maxDate);
     commitments = commitments.filter(c => c.date <= maxDate);
     epTransfers = epTransfers.filter(t => t.date <= maxDate);
     washes = washes.filter(w => w.date <= maxDate);
@@ -1275,6 +1334,18 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     .filter(p => p.type === 'payment_received')
     .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
+  // 6b. Process Party Service & Salary Bills (Credit to party: amount we owe them)
+  const totalPartyBillsBilled = partyBills.reduce((sum, b) => {
+    const net = b.netAmount !== undefined ? Number(b.netAmount) : (Number(b.amount) || 0);
+    return sum + net;
+  }, 0);
+
+  // 6c. Process Balance Adjustments (Credit increases what we owe / clears Dr; Debit decreases what we owe / clears Cr)
+  const totalAdjustmentNet = balanceAdjustments.reduce((sum, a) => {
+    const amt = Number(a.amount) || 0;
+    return a.type === 'debit' ? (sum - amt) : (sum + amt);
+  }, 0);
+
   // 7. Opening Account Balance
   let openingBal = Number(supplier.openingBalance) || 0;
   if (supplier.openingBalanceType === 'debit') {
@@ -1343,7 +1414,7 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     }
   });
 
-  const netPayable = openingBal + totalPurchasesBilled - totalSalesBilled - totalPaid + totalReceived + transferFinancialNet + washAdjustmentAmount;
+  const netPayable = openingBal + totalPurchasesBilled + totalPartyBillsBilled - totalSalesBilled - totalPaid + totalReceived + transferFinancialNet + washAdjustmentAmount + totalAdjustmentNet;
 
   return {
     ...supplier,
@@ -1379,7 +1450,9 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     storageAvgOutturn: Math.round(storageAvgOutturn * 100) / 100,
     totalPurchasesBilled: Math.round(totalPurchasesBilled * 100) / 100,
     totalSalesBilled: Math.round(totalSalesBilled * 100) / 100,
-    totalBilledAmount: Math.round((totalPurchasesBilled - totalSalesBilled) * 100) / 100,
+    totalPartyBillsBilled: Math.round(totalPartyBillsBilled * 100) / 100,
+    totalAdjustmentNet: Math.round(totalAdjustmentNet * 100) / 100,
+    totalBilledAmount: Math.round((totalPurchasesBilled + totalPartyBillsBilled - totalSalesBilled) * 100) / 100,
     totalPaid: Math.round(totalPaid * 100) / 100,
     totalReceived: Math.round(totalReceived * 100) / 100,
     totalCgst: Math.round(totalCgst * 100) / 100,
@@ -1437,6 +1510,8 @@ const dbController = {
     dbState.commitments = [];
     dbState.settlements = [];
     dbState.payments = [];
+    dbState.partyBills = [];
+    dbState.balanceAdjustments = [];
     dbState.epTransfers = [];
     dbState.commitmentWashes = [];
     dbState.millingLogs = [];
@@ -1458,6 +1533,8 @@ const dbController = {
         if (MongoCommitment) await MongoCommitment.deleteMany({});
         if (MongoSettlement) await MongoSettlement.deleteMany({});
         if (MongoPayment) await MongoPayment.deleteMany({});
+        if (MongoPartyBill) await MongoPartyBill.deleteMany({});
+        if (MongoBalanceAdjustment) await MongoBalanceAdjustment.deleteMany({});
         if (MongoEpTransfer) await MongoEpTransfer.deleteMany({});
         if (MongoCommitmentWash) await MongoCommitmentWash.deleteMany({});
         if (MongoProduct) await MongoProduct.deleteMany({});
@@ -1694,6 +1771,8 @@ const dbController = {
     const commitments = (dbState.commitments || []).filter(c => c.supplierId === supplierId || c.partyId === supplierId).reverse();
     const epTransfers = (dbState.epTransfers || []).filter(t => t.fromPartyId === supplierId || t.toPartyId === supplierId).reverse();
     const washes = (dbState.commitmentWashes || []).filter(w => w.supplierId === supplierId || w.partyId === supplierId).reverse();
+    const partyBills = (dbState.partyBills || []).filter(b => b.supplierId === supplierId).reverse();
+    const balanceAdjustments = (dbState.balanceAdjustments || []).filter(a => a.supplierId === supplierId).reverse();
 
     return {
       summary,
@@ -1703,7 +1782,9 @@ const dbController = {
       payments,
       commitments,
       epTransfers,
-      washes
+      washes,
+      partyBills,
+      balanceAdjustments
     };
   },
 
@@ -3533,6 +3614,194 @@ const dbController = {
     saveLocalDb();
     if (isMongoConnected && MongoPayment) {
       MongoPayment.deleteOne({ id }).catch(e => console.error(e));
+    }
+    return { success: true };
+  },
+
+  // PARTY SERVICE & EXPENSE BILLS (Credit to party / Payable)
+  getPartyBills(supplierId) {
+    ensureDatabaseReady();
+    let list = (dbState.partyBills || []).slice();
+    if (supplierId) {
+      list = list.filter(b => b.supplierId === supplierId);
+    }
+    return list.reverse();
+  },
+
+  addPartyBill(data, shouldSave = true) {
+    ensureDatabaseReady();
+    const id = 'bill_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const count = (dbState.partyBills || []).length + 1;
+    const billNo = data.billNo ? data.billNo.trim() : ('BILL-' + String(count).padStart(4, '0'));
+    const amount = Number(data.amount) || 0;
+    const tdsRate = Number(data.tdsRate) || 0;
+    const tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : (tdsRate > 0 ? Math.round((amount * (tdsRate / 100)) * 100) / 100 : 0);
+    const netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((amount - tdsAmount) * 100) / 100;
+
+    const newBill = {
+      id,
+      billNo,
+      date: data.date || new Date().toISOString().split('T')[0],
+      supplierId: data.supplierId,
+      supplierName: data.supplierName,
+      billCategory: data.billCategory || 'salary', // 'salary', 'service', 'transport', 'labour', 'rent', 'maintenance', 'other'
+      particulars: data.particulars || data.description || 'Service/Expense Bill',
+      amount,
+      tdsRate,
+      tdsAmount,
+      netAmount,
+      notes: data.notes || '',
+      fy: data.fy || getFinancialYear(data.date),
+      isLocked: false,
+      updatedAt: Date.now(),
+      createdAt: new Date().toISOString()
+    };
+
+    if (!dbState.partyBills) dbState.partyBills = [];
+    dbState.partyBills.push(newBill);
+    if (shouldSave) {
+      saveLocalDb();
+      if (isMongoConnected && MongoPartyBill) {
+        MongoPartyBill.findOneAndUpdate({ id }, newBill, { upsert: true }).catch(e => console.error(e));
+      }
+    }
+    return newBill;
+  },
+
+  updatePartyBill(id, data) {
+    if (!dbState.partyBills) dbState.partyBills = [];
+    const index = dbState.partyBills.findIndex(b => b.id === id);
+    if (index === -1) throw new Error('Party bill not found');
+    const bill = dbState.partyBills[index];
+    if (bill.isLocked) {
+      throw new Error(`Cannot modify bill ${bill.billNo || bill.id} because it belongs to closed Financial Year (${bill.fy || 'Audited'}). Record is locked.`);
+    }
+
+    const amount = data.amount !== undefined ? Number(data.amount) : bill.amount;
+    const tdsRate = data.tdsRate !== undefined ? Number(data.tdsRate) : (bill.tdsRate || 0);
+    const tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : (bill.tdsAmount || 0);
+    const netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((amount - tdsAmount) * 100) / 100;
+
+    dbState.partyBills[index] = {
+      ...bill,
+      billNo: data.billNo !== undefined ? data.billNo.trim() : bill.billNo,
+      date: data.date || bill.date,
+      supplierId: data.supplierId || bill.supplierId,
+      supplierName: data.supplierName || bill.supplierName,
+      billCategory: data.billCategory || bill.billCategory,
+      particulars: data.particulars !== undefined ? data.particulars : bill.particulars,
+      amount,
+      tdsRate,
+      tdsAmount,
+      netAmount,
+      notes: data.notes !== undefined ? data.notes : bill.notes,
+      updatedAt: Date.now()
+    };
+
+    saveLocalDb();
+    if (isMongoConnected && MongoPartyBill) {
+      MongoPartyBill.findOneAndUpdate({ id }, dbState.partyBills[index]).catch(e => console.error(e));
+    }
+    return dbState.partyBills[index];
+  },
+
+  deletePartyBill(id) {
+    if (!dbState.partyBills) dbState.partyBills = [];
+    const bill = dbState.partyBills.find(b => b.id === id);
+    if (bill && bill.isLocked) {
+      throw new Error(`Cannot delete bill ${bill.billNo || bill.id} because it belongs to closed Financial Year (${bill.fy || 'Audited'}). Record is locked.`);
+    }
+    dbState.partyBills = dbState.partyBills.filter(b => b.id !== id);
+    saveLocalDb();
+    if (isMongoConnected && MongoPartyBill) {
+      MongoPartyBill.deleteOne({ id }).catch(e => console.error(e));
+    }
+    return { success: true };
+  },
+
+  // PARTY BALANCE ADJUSTMENTS (Set small difference to zero / round-off / write-off)
+  getBalanceAdjustments(supplierId) {
+    ensureDatabaseReady();
+    let list = (dbState.balanceAdjustments || []).slice();
+    if (supplierId) {
+      list = list.filter(a => a.supplierId === supplierId);
+    }
+    return list.reverse();
+  },
+
+  addBalanceAdjustment(data, shouldSave = true) {
+    ensureDatabaseReady();
+    const id = 'adj_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const count = (dbState.balanceAdjustments || []).length + 1;
+    const adjustmentNo = data.adjustmentNo ? data.adjustmentNo.trim() : ('ADJ-' + String(count).padStart(4, '0'));
+    const amount = Number(data.amount) || 0;
+
+    const newAdj = {
+      id,
+      adjustmentNo,
+      date: data.date || new Date().toISOString().split('T')[0],
+      supplierId: data.supplierId,
+      supplierName: data.supplierName,
+      type: data.type || 'debit', // 'debit' (reduces payable / we owe less) or 'credit' (increases payable / we owe more)
+      amount,
+      reason: data.reason || 'Balance Adjustment / Rounding to Zero',
+      notes: data.notes || '',
+      fy: data.fy || getFinancialYear(data.date),
+      isLocked: false,
+      updatedAt: Date.now(),
+      createdAt: new Date().toISOString()
+    };
+
+    if (!dbState.balanceAdjustments) dbState.balanceAdjustments = [];
+    dbState.balanceAdjustments.push(newAdj);
+    if (shouldSave) {
+      saveLocalDb();
+      if (isMongoConnected && MongoBalanceAdjustment) {
+        MongoBalanceAdjustment.findOneAndUpdate({ id }, newAdj, { upsert: true }).catch(e => console.error(e));
+      }
+    }
+    return newAdj;
+  },
+
+  updateBalanceAdjustment(id, data) {
+    if (!dbState.balanceAdjustments) dbState.balanceAdjustments = [];
+    const index = dbState.balanceAdjustments.findIndex(a => a.id === id);
+    if (index === -1) throw new Error('Adjustment not found');
+    const adj = dbState.balanceAdjustments[index];
+    if (adj.isLocked) {
+      throw new Error(`Cannot modify adjustment ${adj.adjustmentNo || adj.id} because it belongs to closed Financial Year (${adj.fy || 'Audited'}). Record is locked.`);
+    }
+
+    dbState.balanceAdjustments[index] = {
+      ...adj,
+      adjustmentNo: data.adjustmentNo !== undefined ? data.adjustmentNo.trim() : adj.adjustmentNo,
+      date: data.date || adj.date,
+      supplierId: data.supplierId || adj.supplierId,
+      supplierName: data.supplierName || adj.supplierName,
+      type: data.type || adj.type,
+      amount: data.amount !== undefined ? Number(data.amount) : adj.amount,
+      reason: data.reason !== undefined ? data.reason : adj.reason,
+      notes: data.notes !== undefined ? data.notes : adj.notes,
+      updatedAt: Date.now()
+    };
+
+    saveLocalDb();
+    if (isMongoConnected && MongoBalanceAdjustment) {
+      MongoBalanceAdjustment.findOneAndUpdate({ id }, dbState.balanceAdjustments[index]).catch(e => console.error(e));
+    }
+    return dbState.balanceAdjustments[index];
+  },
+
+  deleteBalanceAdjustment(id) {
+    if (!dbState.balanceAdjustments) dbState.balanceAdjustments = [];
+    const adj = dbState.balanceAdjustments.find(a => a.id === id);
+    if (adj && adj.isLocked) {
+      throw new Error(`Cannot delete adjustment ${adj.adjustmentNo || adj.id} because it belongs to closed Financial Year (${adj.fy || 'Audited'}). Record is locked.`);
+    }
+    dbState.balanceAdjustments = dbState.balanceAdjustments.filter(a => a.id !== id);
+    saveLocalDb();
+    if (isMongoConnected && MongoBalanceAdjustment) {
+      MongoBalanceAdjustment.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
   },
