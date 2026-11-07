@@ -1,69 +1,69 @@
 {
-  "measuredAt": "2026-11-07T06:44:56.943Z",
-  "node": "v22.23.4",
-  "platform": "linux",
+  "measuredAt": "2026-11-07T10:55:27.103Z",
+  "node": "v23.10.0",
+  "platform": "darwin",
   "arch": "x64",
   "note": "Isolated temp JSON store. No MongoDB and no production file. Full-file rewrite remains the save path.",
   "runs": [
     {
       "records": 10000,
-      "saveMs": 26.78,
-      "saveHeapDeltaMb": 6.1,
-      "searchMs": 3.06,
+      "saveMs": 68.57,
+      "saveHeapDeltaMb": 7.75,
+      "searchMs": 12.85,
       "searchReturned": 25,
       "searchTotal": 589,
-      "reportMs": 4.51,
-      "ledgerMs": 5.69,
+      "reportMs": 5.49,
+      "ledgerMs": 10.14,
       "fileMb": 3.71,
-      "rssMb": 101.92
+      "rssMb": 73.98
     },
     {
       "records": 100000,
-      "saveMs": 165.88,
-      "saveHeapDeltaMb": 38.57,
-      "searchMs": 21.43,
+      "saveMs": 258.3,
+      "saveHeapDeltaMb": 40.31,
+      "searchMs": 44.24,
       "searchReturned": 25,
       "searchTotal": 5883,
-      "reportMs": 7.28,
-      "ledgerMs": 13.83,
+      "reportMs": 14.49,
+      "ledgerMs": 34.07,
       "fileMb": 37.26,
-      "rssMb": 169.6
+      "rssMb": 224.82
     },
     {
       "records": 500000,
-      "saveMs": 1061.18,
-      "saveHeapDeltaMb": 202.4,
-      "searchMs": 79.63,
+      "saveMs": 1440.04,
+      "saveHeapDeltaMb": 199.91,
+      "searchMs": 185.33,
       "searchReturned": 25,
       "searchTotal": 29412,
-      "reportMs": 20.99,
-      "ledgerMs": 71.91,
+      "reportMs": 41.46,
+      "ledgerMs": 178.7,
       "fileMb": 187.14,
-      "rssMb": 340.46
+      "rssMb": 540.46
     }
   ],
   "domainInserts": {
     "count": 500,
-    "elapsedMs": 2.54,
-    "flushMs": 913.24,
+    "elapsedMs": 4.75,
+    "flushMs": 1476.88,
     "waitedForNetwork": false
   },
   "batches": [
     {
       "count": 100,
-      "insertMs": 0.96,
-      "flushMs": 772.84,
+      "insertMs": 2.2,
+      "flushMs": 1233.12,
       "waitedForNetwork": false,
-      "rangeReportMs": 54.94,
-      "peakRssMb": 516.3
+      "rangeReportMs": 139.4,
+      "peakRssMb": 716.44
     },
     {
       "count": 1000,
-      "insertMs": 4,
-      "flushMs": 769.11,
+      "insertMs": 6.16,
+      "flushMs": 1318.89,
       "waitedForNetwork": false,
-      "rangeReportMs": 84.41,
-      "peakRssMb": 357.06
+      "rangeReportMs": 218.92,
+      "peakRssMb": 556.14
     }
   ]
 }

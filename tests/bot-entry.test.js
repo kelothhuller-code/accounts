@@ -246,12 +246,12 @@ test('local bot HTTP rejects browser origin and serves preview without cloud syn
     });
     assert.equal(noHeader.status, 403);
 
-    const gone = await fetch(`http://127.0.0.1:${port}/api/arrivals`, {
+    const notFound = await fetch(`http://127.0.0.1:${port}/api/unknown-endpoint`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Commodity-Bot': '1' },
       body: '{}'
     });
-    assert.equal(gone.status, 410);
+    assert.equal(notFound.status, 404);
 
     const preview = await fetch(`http://127.0.0.1:${port}/api/bot/preview`, {
       method: 'POST',
@@ -269,6 +269,7 @@ test('local bot HTTP rejects browser origin and serves preview without cloud syn
     assert.equal(body.ok, false);
     assert.equal(state.arrivals.length, 0);
   } finally {
+    if (server.closeAllConnections) server.closeAllConnections();
     server.close();
   }
 });

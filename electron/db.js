@@ -656,16 +656,34 @@ let mongoError = null;
 let cloudSuspendDepth = 0;
 
 function cloudSyncEnabled() {
-  return cloudSuspendDepth === 0 && isMongoConnected;
+  return cloudSuspendDepth === 0 && isMongoConnected && mongoose.connection && mongoose.connection.readyState === 1;
 }
 
-// Initialize Mongoose connection with graceful fallback
+// Connection lifecycle event hooks
+if (mongoose.connection) {
+  mongoose.connection.on('connected', () => {
+    isMongoConnected = true;
+    mongoError = null;
+  });
+  mongoose.connection.on('disconnected', () => {
+    isMongoConnected = false;
+  });
+  mongoose.connection.on('error', (err) => {
+    mongoError = err ? err.message : 'MongoDB connection error';
+  });
+}
+
+// Initialize Mongoose connection with graceful fallback and resilient network options
 async function initMongo(uri) {
   const connectionUri = uri || dbState.settings.mongoUri;
   try {
     mongoose.set('strictQuery', false);
     await mongoose.connect(connectionUri, {
-      serverSelectionTimeoutMS: 4000,
+      serverSelectionTimeoutMS: 15000,
+      heartbeatFrequencyMS: 10000,
+      connectTimeoutMS: 20000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10
     });
     isMongoConnected = true;
     mongoError = null;
@@ -1178,6 +1196,34 @@ function deduplicateSuppliersInDb() {
   return { mergedCount: duplicateReplacements.size };
 }
 
+// High-speed bulk upsert helper grouping records into batches of 500
+async function bulkUpsert(Model, items, chunkSize = 500) {
+  if (!Model || !Array.isArray(items) || items.length === 0) return;
+  const validItems = items.filter(doc => doc && (doc.id || doc._id));
+  if (validItems.length === 0) return;
+
+  for (let i = 0; i < validItems.length; i += chunkSize) {
+    const chunk = validItems.slice(i, i + chunkSize);
+    const ops = chunk.map(doc => {
+      const cleanDoc = { ...doc };
+      delete cleanDoc._id;
+      delete cleanDoc.__v;
+      const filter = doc.id ? { id: doc.id } : { _id: doc._id };
+      return {
+        updateOne: {
+          filter,
+          update: { $set: cleanDoc },
+          upsert: true
+        }
+      };
+    });
+
+    if (ops.length > 0) {
+      await Model.bulkWrite(ops, { ordered: false });
+    }
+  }
+}
+
 async function loadFromMongo() {
   if (!isMongoConnected) return;
   try {
@@ -1198,19 +1244,28 @@ async function loadFromMongo() {
       MongoBalanceAdjustment ? MongoBalanceAdjustment.find({}).lean() : Promise.resolve([])
     ]);
 
-    dbState.suppliers = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
-    dbState.arrivals = (arrs || []).map(a => { delete a._id; delete a.__v; return a; });
-    dbState.dispatches = (disps || []).map(d => { delete d._id; delete d.__v; return d; });
-    dbState.commitments = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
-    dbState.settlements = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
-    dbState.payments = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
-    dbState.partyBills = (bills || []).map(b => { delete b._id; delete b.__v; return b; });
-    dbState.balanceAdjustments = (adjs || []).map(a => { delete a._id; delete a.__v; return a; });
-    dbState.epTransfers = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
-    dbState.commitmentWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
-    dbState.products = (prods || []).map(pr => { delete pr._id; delete pr.__v; return pr; });
-    dbState.millingLogs = (mills || []).map(m => { delete m._id; delete m.__v; return m; });
-    dbState.openingStockEntries = (ops || []).map(o => { delete o._id; delete o.__v; return o; });
+    const sanitize = (list) => (list || []).map(item => {
+      if (!item) return item;
+      const copy = { ...item };
+      if (!copy.id && copy._id) copy.id = copy._id.toString();
+      delete copy._id;
+      delete copy.__v;
+      return copy;
+    });
+
+    dbState.suppliers = sanitize(sups);
+    dbState.arrivals = sanitize(arrs);
+    dbState.dispatches = sanitize(disps);
+    dbState.commitments = sanitize(comms);
+    dbState.settlements = sanitize(sets);
+    dbState.payments = sanitize(pays);
+    dbState.partyBills = sanitize(bills);
+    dbState.balanceAdjustments = sanitize(adjs);
+    dbState.epTransfers = sanitize(trfs);
+    dbState.commitmentWashes = sanitize(washes);
+    dbState.products = sanitize(prods);
+    dbState.millingLogs = sanitize(mills);
+    dbState.openingStockEntries = sanitize(ops);
 
     if (!dbState.settings) dbState.settings = {};
     dbState.settings.processingProfiles = {};
@@ -1234,59 +1289,34 @@ async function syncWithMongo() {
   try {
     deduplicateSuppliersInDb();
 
-    // 1. Upload local data to Mongo so any locally added items get pushed to cloud
-    for (const sup of (dbState.suppliers || [])) {
-      await MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true });
-    }
-    for (const arr of (dbState.arrivals || [])) {
-      await MongoArrival.findOneAndUpdate({ id: arr.id }, arr, { upsert: true });
-    }
-    for (const disp of (dbState.dispatches || [])) {
-      await MongoDispatch.findOneAndUpdate({ id: disp.id }, disp, { upsert: true });
-    }
-    for (const com of (dbState.commitments || [])) {
-      await MongoCommitment.findOneAndUpdate({ id: com.id }, com, { upsert: true });
-    }
-    for (const set of (dbState.settlements || [])) {
-      await MongoSettlement.findOneAndUpdate({ id: set.id }, set, { upsert: true });
-    }
-    for (const pay of (dbState.payments || [])) {
-      await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
-    }
-    if (MongoPartyBill) {
-      for (const bill of (dbState.partyBills || [])) {
-        await MongoPartyBill.findOneAndUpdate({ id: bill.id }, bill, { upsert: true });
-      }
-    }
-    if (MongoBalanceAdjustment) {
-      for (const adj of (dbState.balanceAdjustments || [])) {
-        await MongoBalanceAdjustment.findOneAndUpdate({ id: adj.id }, adj, { upsert: true });
-      }
-    }
-    for (const trf of (dbState.epTransfers || [])) {
-      await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
-    }
-    for (const wash of (dbState.commitmentWashes || [])) {
-      await MongoCommitmentWash.findOneAndUpdate({ id: wash.id }, wash, { upsert: true });
-    }
-    for (const prod of (dbState.products || [])) {
-      await MongoProduct.findOneAndUpdate({ id: prod.id }, prod, { upsert: true });
-    }
-    for (const mill of (dbState.millingLogs || [])) {
-      await MongoMillingLog.findOneAndUpdate({ id: mill.id }, mill, { upsert: true });
-    }
-    for (const op of (dbState.openingStockEntries || [])) {
-      await MongoOpeningStockEntry.findOneAndUpdate({ id: op.id }, op, { upsert: true });
-    }
+    // 1. Bulk upload local data to Mongo in batched network calls
+    const syncTasks = [
+      bulkUpsert(MongoSupplier, dbState.suppliers),
+      bulkUpsert(MongoArrival, dbState.arrivals),
+      bulkUpsert(MongoDispatch, dbState.dispatches),
+      bulkUpsert(MongoCommitment, dbState.commitments),
+      bulkUpsert(MongoSettlement, dbState.settlements),
+      bulkUpsert(MongoPayment, dbState.payments),
+      MongoPartyBill ? bulkUpsert(MongoPartyBill, dbState.partyBills) : Promise.resolve(),
+      MongoBalanceAdjustment ? bulkUpsert(MongoBalanceAdjustment, dbState.balanceAdjustments) : Promise.resolve(),
+      bulkUpsert(MongoEpTransfer, dbState.epTransfers),
+      bulkUpsert(MongoCommitmentWash, dbState.commitmentWashes),
+      bulkUpsert(MongoProduct, dbState.products),
+      bulkUpsert(MongoMillingLog, dbState.millingLogs),
+      bulkUpsert(MongoOpeningStockEntry, dbState.openingStockEntries)
+    ];
+
     if (MongoProcessingProfile && dbState.settings && dbState.settings.processingProfiles) {
-      for (const [sourceProduct, outputs] of Object.entries(dbState.settings.processingProfiles)) {
-        await MongoProcessingProfile.findOneAndUpdate(
-          { id: sourceProduct },
-          { id: sourceProduct, sourceProduct, outputs, updatedAt: new Date() },
-          { upsert: true }
-        );
-      }
+      const profileItems = Object.entries(dbState.settings.processingProfiles).map(([sourceProduct, outputs]) => ({
+        id: sourceProduct,
+        sourceProduct,
+        outputs,
+        updatedAt: new Date()
+      }));
+      syncTasks.push(bulkUpsert(MongoProcessingProfile, profileItems));
     }
+
+    await Promise.all(syncTasks);
 
     // 2. Fetch remote collections from Mongo and merge cleanly
     const [sups, arrs, disps, comms, sets, pays, trfs, washes, prods, mills, ops, profs, bills, adjs] = await Promise.all([
@@ -1306,19 +1336,28 @@ async function syncWithMongo() {
       MongoBalanceAdjustment ? MongoBalanceAdjustment.find({}).lean() : Promise.resolve([])
     ]);
 
-    const cleanedSups = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
-    const cleanedArrs = (arrs || []).map(a => { delete a._id; delete a.__v; return a; });
-    const cleanedDisps = (disps || []).map(d => { delete d._id; delete d.__v; return d; });
-    const cleanedComms = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
-    const cleanedSets = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
-    const cleanedPays = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
-    const cleanedBills = (bills || []).map(b => { delete b._id; delete b.__v; return b; });
-    const cleanedAdjs = (adjs || []).map(a => { delete a._id; delete a.__v; return a; });
-    const cleanedTrfs = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
-    const cleanedWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
-    const cleanedProds = (prods || []).map(pr => { delete pr._id; delete pr.__v; return pr; });
-    const cleanedMills = (mills || []).map(m => { delete m._id; delete m.__v; return m; });
-    const cleanedOps = (ops || []).map(o => { delete o._id; delete o.__v; return o; });
+    const sanitize = (list) => (list || []).map(item => {
+      if (!item) return item;
+      const copy = { ...item };
+      if (!copy.id && copy._id) copy.id = copy._id.toString();
+      delete copy._id;
+      delete copy.__v;
+      return copy;
+    });
+
+    const cleanedSups = sanitize(sups);
+    const cleanedArrs = sanitize(arrs);
+    const cleanedDisps = sanitize(disps);
+    const cleanedComms = sanitize(comms);
+    const cleanedSets = sanitize(sets);
+    const cleanedPays = sanitize(pays);
+    const cleanedBills = sanitize(bills);
+    const cleanedAdjs = sanitize(adjs);
+    const cleanedTrfs = sanitize(trfs);
+    const cleanedWashes = sanitize(washes);
+    const cleanedProds = sanitize(prods);
+    const cleanedMills = sanitize(mills);
+    const cleanedOps = sanitize(ops);
 
     dbState.suppliers = mergeSuppliers(dbState.suppliers, cleanedSups);
     dbState.arrivals = mergeCollections(dbState.arrivals, cleanedArrs);
@@ -1838,59 +1877,34 @@ const dbController = {
     }
     deduplicateSuppliersInDb();
 
-    // 1. Upsert all local records to MongoDB
-    for (const sup of (dbState.suppliers || [])) {
-      await MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true });
-    }
-    for (const arr of (dbState.arrivals || [])) {
-      await MongoArrival.findOneAndUpdate({ id: arr.id }, arr, { upsert: true });
-    }
-    for (const disp of (dbState.dispatches || [])) {
-      await MongoDispatch.findOneAndUpdate({ id: disp.id }, disp, { upsert: true });
-    }
-    for (const com of (dbState.commitments || [])) {
-      await MongoCommitment.findOneAndUpdate({ id: com.id }, com, { upsert: true });
-    }
-    for (const set of (dbState.settlements || [])) {
-      await MongoSettlement.findOneAndUpdate({ id: set.id }, set, { upsert: true });
-    }
-    for (const pay of (dbState.payments || [])) {
-      await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
-    }
-    if (MongoPartyBill) {
-      for (const bill of (dbState.partyBills || [])) {
-        await MongoPartyBill.findOneAndUpdate({ id: bill.id }, bill, { upsert: true });
-      }
-    }
-    if (MongoBalanceAdjustment) {
-      for (const adj of (dbState.balanceAdjustments || [])) {
-        await MongoBalanceAdjustment.findOneAndUpdate({ id: adj.id }, adj, { upsert: true });
-      }
-    }
-    for (const trf of (dbState.epTransfers || [])) {
-      await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
-    }
-    for (const wash of (dbState.commitmentWashes || [])) {
-      await MongoCommitmentWash.findOneAndUpdate({ id: wash.id }, wash, { upsert: true });
-    }
-    for (const prod of (dbState.products || [])) {
-      await MongoProduct.findOneAndUpdate({ id: prod.id }, prod, { upsert: true });
-    }
-    for (const mill of (dbState.millingLogs || [])) {
-      await MongoMillingLog.findOneAndUpdate({ id: mill.id }, mill, { upsert: true });
-    }
-    for (const op of (dbState.openingStockEntries || [])) {
-      await MongoOpeningStockEntry.findOneAndUpdate({ id: op.id }, op, { upsert: true });
-    }
+    // 1. Bulk upsert all local records to MongoDB in parallel batched operations
+    const pushTasks = [
+      bulkUpsert(MongoSupplier, dbState.suppliers),
+      bulkUpsert(MongoArrival, dbState.arrivals),
+      bulkUpsert(MongoDispatch, dbState.dispatches),
+      bulkUpsert(MongoCommitment, dbState.commitments),
+      bulkUpsert(MongoSettlement, dbState.settlements),
+      bulkUpsert(MongoPayment, dbState.payments),
+      MongoPartyBill ? bulkUpsert(MongoPartyBill, dbState.partyBills) : Promise.resolve(),
+      MongoBalanceAdjustment ? bulkUpsert(MongoBalanceAdjustment, dbState.balanceAdjustments) : Promise.resolve(),
+      bulkUpsert(MongoEpTransfer, dbState.epTransfers),
+      bulkUpsert(MongoCommitmentWash, dbState.commitmentWashes),
+      bulkUpsert(MongoProduct, dbState.products),
+      bulkUpsert(MongoMillingLog, dbState.millingLogs),
+      bulkUpsert(MongoOpeningStockEntry, dbState.openingStockEntries)
+    ];
+
     if (MongoProcessingProfile && dbState.settings && dbState.settings.processingProfiles) {
-      for (const [sourceProduct, outputs] of Object.entries(dbState.settings.processingProfiles)) {
-        await MongoProcessingProfile.findOneAndUpdate(
-          { id: sourceProduct },
-          { id: sourceProduct, sourceProduct, outputs, updatedAt: new Date() },
-          { upsert: true }
-        );
-      }
+      const profileItems = Object.entries(dbState.settings.processingProfiles).map(([sourceProduct, outputs]) => ({
+        id: sourceProduct,
+        sourceProduct,
+        outputs,
+        updatedAt: new Date()
+      }));
+      pushTasks.push(bulkUpsert(MongoProcessingProfile, profileItems));
     }
+
+    await Promise.all(pushTasks);
 
     return {
       success: true,
@@ -1904,7 +1918,11 @@ const dbController = {
         payments: (dbState.payments || []).length,
         partyBills: (dbState.partyBills || []).length,
         balanceAdjustments: (dbState.balanceAdjustments || []).length,
-        products: (dbState.products || []).length
+        products: (dbState.products || []).length,
+        openingStockEntries: (dbState.openingStockEntries || []).length,
+        millingLogs: (dbState.millingLogs || []).length,
+        epTransfers: (dbState.epTransfers || []).length,
+        commitmentWashes: (dbState.commitmentWashes || []).length
       }
     };
   },
@@ -1929,7 +1947,11 @@ const dbController = {
         payments: (dbState.payments || []).length,
         partyBills: (dbState.partyBills || []).length,
         balanceAdjustments: (dbState.balanceAdjustments || []).length,
-        products: (dbState.products || []).length
+        products: (dbState.products || []).length,
+        openingStockEntries: (dbState.openingStockEntries || []).length,
+        millingLogs: (dbState.millingLogs || []).length,
+        epTransfers: (dbState.epTransfers || []).length,
+        commitmentWashes: (dbState.commitmentWashes || []).length
       }
     };
   },

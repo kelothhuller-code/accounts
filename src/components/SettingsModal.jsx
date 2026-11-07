@@ -188,7 +188,7 @@ export default function SettingsModal({ isOpen, onClose }) {
     try {
       const res = await dbAction('db:push-to-mongo');
       if (res && res.success) {
-        setMessage(`☁️ ${res.message} (${res.counts?.suppliers || 0} parties, ${res.counts?.arrivals || 0} arrivals, ${res.counts?.dispatches || 0} dispatches, ${res.counts?.partyBills || 0} bills, ${res.counts?.balanceAdjustments || 0} adjustments)`);
+        setMessage(`☁️ ${res.message} (${res.counts?.suppliers || 0} parties, ${res.counts?.arrivals || 0} arrivals, ${res.counts?.dispatches || 0} dispatches, ${res.counts?.partyBills || 0} bills, ${res.counts?.balanceAdjustments || 0} adjustments, ${res.counts?.openingStockEntries || 0} stock entries)`);
         await loadStatus();
       } else {
         setIsError(true);
@@ -214,7 +214,7 @@ export default function SettingsModal({ isOpen, onClose }) {
     try {
       const res = await dbAction('db:pull-from-mongo');
       if (res && res.success) {
-        setMessage(`📥 ${res.message} (${res.counts?.suppliers || 0} parties, ${res.counts?.arrivals || 0} arrivals, ${res.counts?.dispatches || 0} dispatches, ${res.counts?.partyBills || 0} bills, ${res.counts?.balanceAdjustments || 0} adjustments)`);
+        setMessage(`📥 ${res.message} (${res.counts?.suppliers || 0} parties, ${res.counts?.arrivals || 0} arrivals, ${res.counts?.dispatches || 0} dispatches, ${res.counts?.partyBills || 0} bills, ${res.counts?.balanceAdjustments || 0} adjustments, ${res.counts?.openingStockEntries || 0} stock entries)`);
         await loadStatus();
         setTimeout(() => window.location.reload(), 800);
       } else {

@@ -623,7 +623,7 @@ export default function StockManagementView({ onOpenLedger, dataVersion = 0, onD
             className={`btn btn-sm ${activeTab === 'opening_parties' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setActiveTab('opening_parties')}
           >
-            👥 Party Storage Balances ({openingEntries.length})
+            ⚖️ Opening Stock & Adjustments ({openingEntries.length})
           </button>
         </div>
 
