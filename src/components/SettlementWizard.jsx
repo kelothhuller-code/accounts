@@ -99,8 +99,15 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
       const targetCategory = cat === 'sales_storage' ? 'sale' : 'purchase';
       const active = (list || []).filter(c => (c.category === targetCategory || !c.category) && c.status === 'active' && c.remainingQty > 0);
       setCommitments(active);
-      if (active.length > 0 && rateMode === 'commitment') {
-        applyCommitment(active[0]);
+      if (active.length > 0) {
+        const targetCom = active.find(c => c.id === selectedCommitmentId) || active[0];
+        setSelectedCommitmentId(targetCom.id);
+        if (rateMode === 'commitment' || !settleRate) {
+          applyCommitment(targetCom);
+        }
+      } else {
+        setSelectedCommitmentId('');
+        if (rateMode === 'commitment') setRateMode('manual');
       }
     } catch (e) {
       console.error(e);
@@ -140,6 +147,8 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         const allIds = pendingDispatches.map(d => d.id);
         setSelectedItemIds(allIds);
         syncInputValues(allIds, pendingDispatches);
+        const allDirect = pendingDispatches.length > 0 && pendingDispatches.every(d => d.calculationBasis === 'direct' || d.isDirectWeight === true);
+        if (allDirect) setIsDirectWeight(true);
       } else {
         // Load unsettled Store In arrivals
         const list = await dbAction('arrivals:get', { supplierId: supId });
@@ -151,6 +160,8 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         const allIds = pendingArrivals.map(a => a.id);
         setSelectedItemIds(allIds);
         syncInputValues(allIds, pendingArrivals);
+        const allDirect = pendingArrivals.length > 0 && pendingArrivals.every(a => a.calculationBasis === 'direct' || a.isDirectWeight === true);
+        if (allDirect) setIsDirectWeight(true);
       }
     } catch (e) {
       setErrorMsg('Failed to load storage items: ' + e.message);
@@ -245,10 +256,10 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     settledEndProduct = Math.min(inEP, totalAvailEndProduct);
     if (isDirectWeight) {
       settledWeight = settledEndProduct;
-      settledBags = Math.round((settledEndProduct / 50) * 100) / 100;
+      settledBags = totalAvailWeight > 0 ? Math.round((totalAvailBags * (settledWeight / totalAvailWeight)) * 100) / 100 : Math.round((settledEndProduct / 50) * 100) / 100;
     } else {
-      settledBags = Math.round((effectiveOutturn > 0 ? settledEndProduct / effectiveOutturn : settledEndProduct / 26) * 100) / 100;
-      settledWeight = Math.round((settledBags * 50) * 100) / 100;
+      settledWeight = Math.round(((settledEndProduct / (effectiveOutturn > 0 ? effectiveOutturn : 26)) * 50) * 100) / 100;
+      settledBags = totalAvailWeight > 0 ? Math.round((totalAvailBags * (settledWeight / totalAvailWeight)) * 100) / 100 : Math.round((effectiveOutturn > 0 ? settledEndProduct / effectiveOutturn : settledEndProduct / 26) * 100) / 100;
     }
   } else {
     // Default 'bags' mode
@@ -259,7 +270,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
     if (isDirectWeight) {
       settledEndProduct = settledWeight;
     } else {
-      settledEndProduct = Math.round((settledBags * effectiveOutturn) * 100) / 100;
+      settledEndProduct = Math.round(((settledWeight / 50) * effectiveOutturn) * 100) / 100;
     }
   }
 
@@ -303,7 +314,11 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
       setErrorMsg('Please enter a valid quantity to settle');
       return;
     }
-    if (numRate <= 0) {
+    const activeCommitmentId = rateMode === 'commitment' ? (selectedCommitmentId || (commitments[0] ? commitments[0].id : null)) : null;
+    const activeCommitment = activeCommitmentId ? commitments.find(c => c.id === activeCommitmentId) : null;
+    const resolvedRate = numRate > 0 ? numRate : (activeCommitment ? Number(activeCommitment.rate) : 0);
+
+    if (resolvedRate <= 0) {
       setErrorMsg('Please enter or select a valid settlement rate');
       return;
     }
@@ -319,14 +334,14 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         settlementCategory,
         arrivalIds: isSales ? [] : selectedItemIds,
         dispatchIds: isSales ? selectedItemIds : [],
-        commitmentId: rateMode === 'commitment' ? selectedCommitmentId : null,
+        commitmentId: activeCommitmentId,
         settleMode,
         settleBags: settledBags,
         settleWeight: settledWeight,
         settleEndProduct: settledEndProduct,
         agreedOutturn: effectiveOutturn,
         isDirectWeight,
-        settlementRate: numRate,
+        settlementRate: resolvedRate,
         rateUnit,
         settlementGrossAmount,
         cgstRate: numCgstRate,
@@ -838,7 +853,8 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                               checked={rateMode === 'commitment'}
                               onChange={() => {
                                 setRateMode('commitment');
-                                if (commitments[0]) applyCommitment(commitments[0]);
+                                const targetCom = commitments.find(c => c.id === selectedCommitmentId) || commitments[0];
+                                if (targetCom) applyCommitment(targetCom);
                               }}
                             />
                             <span>Against Contract</span>
@@ -848,17 +864,27 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                     </div>
 
                     {rateMode === 'commitment' && commitments.length > 0 ? (
-                      <select
-                        className="form-control"
-                        value={selectedCommitmentId}
-                        onChange={e => handleCommitmentChange(e.target.value)}
-                      >
-                        {commitments.map(c => (
-                          <option key={c.id} value={c.id}>
-                            {c.commitmentNo} - Rate ₹{c.rate} ({c.type}) - Rem: {c.remainingQty}
-                          </option>
-                        ))}
-                      </select>
+                      <div>
+                        <select
+                          className="form-control"
+                          value={selectedCommitmentId || (commitments[0] ? commitments[0].id : '')}
+                          onChange={e => handleCommitmentChange(e.target.value)}
+                        >
+                          {commitments.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.commitmentNo} — ₹{c.rate}/{c.rateUnit || 'kg'} ({c.type}) — Rem: {c.remainingQty}
+                            </option>
+                          ))}
+                        </select>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.35rem', fontSize: '0.78rem' }}>
+                          <span style={{ color: '#475569' }}>
+                            Rate: <strong style={{ color: '#047857' }}>₹{settleRate || commitments[0]?.rate}</strong>
+                          </span>
+                          <span style={{ color: '#64748b' }}>
+                            Remaining: {commitments.find(c => c.id === (selectedCommitmentId || commitments[0]?.id))?.remainingQty} kg
+                          </span>
+                        </div>
+                      </div>
                     ) : (
                       <input
                         type="number"
@@ -1035,11 +1061,24 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
                   </div>
                 </div>
 
+                {(!selectedSupplierId || selectedItemIds.length === 0 || settledBags <= 0 || (numRate <= 0 && (!commitments[0] || rateMode !== 'commitment'))) && (
+                  <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', padding: '0.6rem 0.85rem', fontSize: '0.82rem', color: '#92400e', marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <AlertCircle size={16} />
+                    <span>
+                      <strong>Action required to settle:</strong>
+                      {!selectedSupplierId && ' Please select a supplier.'}
+                      {selectedSupplierId && selectedItemIds.length === 0 && ' Select at least one storage lot.'}
+                      {selectedSupplierId && selectedItemIds.length > 0 && settledBags <= 0 && ' Enter a positive quantity to settle.'}
+                      {selectedSupplierId && selectedItemIds.length > 0 && settledBags > 0 && numRate <= 0 && ' Enter or select an agreed rate.'}
+                    </span>
+                  </div>
+                )}
+
                 <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
                   <button
                     type="submit"
                     className="btn btn-primary"
-                    disabled={submitting || settledBags <= 0 || numRate <= 0}
+                    disabled={submitting}
                     style={{ padding: '0.75rem 1.75rem', fontSize: '0.95rem', fontWeight: 700 }}
                   >
                     <Check size={18} /> {submitting ? 'Executing Settlement...' : 'Execute Storage Settlement'}

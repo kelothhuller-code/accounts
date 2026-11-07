@@ -2687,7 +2687,11 @@ const dbController = {
     let taxTreatment = arr.taxTreatment || 'none';
     let submittedNetAmountIgnored = arr.submittedNetAmountIgnored || null;
 
-    if (arr.status !== 'storage') {
+    const rateType = data.rateType || arr.rateType || (arr.status === 'storage' ? 'storage' : 'fixed');
+    const newStatus = data.status || (rateType === 'storage' ? 'storage' : (billType === 'cash_bill' || arr.billType === 'cash_bill' ? 'cash_bill' : 'billed'));
+    const newCommitmentId = rateType === 'commitment' ? (data.commitmentId !== undefined ? data.commitmentId : (arr.commitmentId || null)) : null;
+
+    if (newStatus !== 'storage') {
       if (rateUnit === 'per_bag') {
         taxableAmount = Math.round((bags * rate) * 100) / 100;
       } else if (calculationBasis === 'direct' || rateUnit === 'per_kg_raw') {
@@ -2723,6 +2727,44 @@ const dbController = {
       }
     }
 
+    // Handle commitment quantity delta if commitment linking changed or was settled from storage
+    if (arr.commitmentId && arr.commitmentId !== newCommitmentId) {
+      const oldComIdx = dbState.commitments.findIndex(c => c.id === arr.commitmentId);
+      if (oldComIdx !== -1) {
+        const com = dbState.commitments[oldComIdx];
+        const oldQty = com.type === 'bags' ? arr.bags : (com.type === 'weight' ? arr.weight : arr.endProductWeight);
+        const newFulfilled = Math.max(0, Math.round(((com.fulfilledQty || 0) - oldQty) * 100) / 100);
+        const newRem = Math.min(com.quantity, Math.round(((com.quantity || 0) - newFulfilled) * 100) / 100);
+        dbState.commitments[oldComIdx] = {
+          ...com,
+          fulfilledQty: newFulfilled,
+          remainingQty: newRem,
+          status: newRem <= 0.001 ? 'completed' : 'active'
+        };
+        if (cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[oldComIdx]).catch(e => console.error(e));
+        }
+      }
+    }
+    if (newCommitmentId && (newCommitmentId !== arr.commitmentId || arr.status === 'storage')) {
+      const newComIdx = dbState.commitments.findIndex(c => c.id === newCommitmentId);
+      if (newComIdx !== -1) {
+        const com = dbState.commitments[newComIdx];
+        const newQty = com.type === 'bags' ? bags : (com.type === 'weight' ? weight : endProductWeight);
+        const newFulfilled = Math.round(((com.fulfilledQty || 0) + newQty) * 100) / 100;
+        const newRem = Math.max(0, Math.round(((com.quantity || 0) - newFulfilled) * 100) / 100);
+        dbState.commitments[newComIdx] = {
+          ...com,
+          fulfilledQty: newFulfilled,
+          remainingQty: newRem,
+          status: newRem <= 0.001 ? 'completed' : 'active'
+        };
+        if (cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[newComIdx]).catch(e => console.error(e));
+        }
+      }
+    }
+
     dbState.arrivals[index] = {
       ...arr,
       date: data.date || arr.date,
@@ -2730,6 +2772,9 @@ const dbController = {
       product: data.product || arr.product,
       calculationBasis,
       rateUnit,
+      rateType,
+      status: newStatus,
+      commitmentId: newCommitmentId,
       weight,
       bags,
       outturn,
@@ -2752,8 +2797,8 @@ const dbController = {
       tcsAmount,
       netAmount,
       submittedNetAmountIgnored,
-      remainingBags: arr.status === 'storage' ? Math.max(0, bags - (arr.settledBags || 0)) : arr.remainingBags,
-      remainingEndProduct: arr.status === 'storage' ? Math.max(0, endProductWeight - (arr.settledEndProduct || 0)) : arr.remainingEndProduct,
+      remainingBags: newStatus === 'storage' ? Math.max(0, bags - (arr.settledBags || 0)) : (arr.remainingBags !== undefined ? arr.remainingBags : 0),
+      remainingEndProduct: newStatus === 'storage' ? Math.max(0, endProductWeight - (arr.settledEndProduct || 0)) : (arr.remainingEndProduct !== undefined ? arr.remainingEndProduct : 0),
       remarks: data.remarks !== undefined ? data.remarks : arr.remarks,
       updatedAt: Date.now()
     };
@@ -3022,7 +3067,11 @@ const dbController = {
     const applyCutting = cuttingKg > 0 && (data.applyCuttingToBill === true || disp.applyCuttingToBill === true);
     const taxableWeight = applyCutting ? billableWeight : weight;
 
-    if (disp.status !== 'storage_out') {
+    const rateType = data.rateType || disp.rateType || (disp.status === 'storage_out' ? 'storage_out' : 'fixed');
+    const newStatus = data.status || (rateType === 'storage_out' ? 'storage_out' : (billType === 'cash_bill' || disp.billType === 'cash_bill' ? 'cash_bill' : 'billed'));
+    const newCommitmentId = rateType === 'commitment' ? (data.commitmentId !== undefined ? data.commitmentId : (disp.commitmentId || null)) : null;
+
+    if (newStatus !== 'storage_out') {
       if (rateUnit === 'per_bag') {
         taxableAmount = Math.round((bags * rate) * 100) / 100;
       } else if (rateUnit === 'per_kg_ep' && calculationBasis === 'end_product') {
@@ -3058,6 +3107,44 @@ const dbController = {
       }
     }
 
+    // Handle commitment quantity delta if commitment linking changed or was settled from storage
+    if (disp.commitmentId && disp.commitmentId !== newCommitmentId) {
+      const oldComIdx = dbState.commitments.findIndex(c => c.id === disp.commitmentId);
+      if (oldComIdx !== -1) {
+        const com = dbState.commitments[oldComIdx];
+        const oldQty = com.type === 'bags' ? disp.bags : (com.type === 'weight' ? disp.weight : disp.endProductWeight);
+        const newFulfilled = Math.max(0, Math.round(((com.fulfilledQty || 0) - oldQty) * 100) / 100);
+        const newRem = Math.min(com.quantity, Math.round(((com.quantity || 0) - newFulfilled) * 100) / 100);
+        dbState.commitments[oldComIdx] = {
+          ...com,
+          fulfilledQty: newFulfilled,
+          remainingQty: newRem,
+          status: newRem <= 0.001 ? 'completed' : 'active'
+        };
+        if (cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[oldComIdx]).catch(e => console.error(e));
+        }
+      }
+    }
+    if (newCommitmentId && (newCommitmentId !== disp.commitmentId || disp.status === 'storage_out')) {
+      const newComIdx = dbState.commitments.findIndex(c => c.id === newCommitmentId);
+      if (newComIdx !== -1) {
+        const com = dbState.commitments[newComIdx];
+        const newQty = com.type === 'bags' ? bags : (com.type === 'weight' ? weight : endProductWeight);
+        const newFulfilled = Math.round(((com.fulfilledQty || 0) + newQty) * 100) / 100;
+        const newRem = Math.max(0, Math.round(((com.quantity || 0) - newFulfilled) * 100) / 100);
+        dbState.commitments[newComIdx] = {
+          ...com,
+          fulfilledQty: newFulfilled,
+          remainingQty: newRem,
+          status: newRem <= 0.001 ? 'completed' : 'active'
+        };
+        if (cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[newComIdx]).catch(e => console.error(e));
+        }
+      }
+    }
+
     dbState.dispatches[index] = {
       ...disp,
       date: data.date || disp.date,
@@ -3068,6 +3155,9 @@ const dbController = {
       product: data.product || disp.product,
       calculationBasis,
       rateUnit,
+      rateType,
+      status: newStatus,
+      commitmentId: newCommitmentId,
       weight,
       bags,
       endProductWeight,
@@ -3091,8 +3181,8 @@ const dbController = {
       cuttingKg: cuttingKg || disp.cuttingKg,
       billableWeight: cuttingKg > 0 ? billableWeight : disp.billableWeight,
       applyCuttingToBill: applyCutting || undefined,
-      remainingBags: disp.status === 'storage_out' ? Math.max(0, bags - (disp.settledBags || 0)) : disp.remainingBags,
-      remainingEndProduct: disp.status === 'storage_out' ? Math.max(0, endProductWeight - (disp.settledEndProduct || 0)) : disp.remainingEndProduct,
+      remainingBags: newStatus === 'storage_out' ? Math.max(0, bags - (disp.settledBags || 0)) : (disp.remainingBags !== undefined ? disp.remainingBags : 0),
+      remainingEndProduct: newStatus === 'storage_out' ? Math.max(0, endProductWeight - (disp.settledEndProduct || 0)) : (disp.remainingEndProduct !== undefined ? disp.remainingEndProduct : 0),
       remarks: data.remarks !== undefined ? data.remarks : disp.remarks,
       updatedAt: Date.now()
     };
@@ -3434,6 +3524,9 @@ const dbController = {
       throw new Error('Selected records have zero remaining storage quantity to settle.');
     }
 
+    // Auto-detect direct weight commodity if flag was omitted or true
+    const isDirect = isDirectWeight || selectedItems.every(i => i.calculationBasis === 'direct' || i.isDirectWeight === true);
+
     // Determine exact settlement quantities based on settleMode
     let bagsToSettle = 0;
     let weightToSettle = 0;
@@ -3443,7 +3536,7 @@ const dbController = {
       weightToSettle = Math.min(Number(settleWeight), totalAvailWeight);
       const ratio = totalAvailWeight > 0 ? weightToSettle / totalAvailWeight : 0;
       bagsToSettle = Math.round((totalAvailBags * ratio) * 100) / 100;
-      if (isDirectWeight) {
+      if (isDirect) {
         epToSettle = weightToSettle;
       } else if (agreedOutturn && Number(agreedOutturn) > 0) {
         epToSettle = Math.round(((weightToSettle / 50) * Number(agreedOutturn)) * 100) / 100;
@@ -3452,12 +3545,12 @@ const dbController = {
       }
     } else if (settleMode === 'end_product' && Number(settleEndProduct) > 0) {
       epToSettle = Math.min(Number(settleEndProduct), totalAvailEndProduct);
-      if (isDirectWeight) {
+      if (isDirect) {
         weightToSettle = epToSettle;
-        bagsToSettle = Math.round((epToSettle / 50) * 100) / 100;
+        bagsToSettle = totalAvailWeight > 0 ? Math.round((totalAvailBags * (weightToSettle / totalAvailWeight)) * 100) / 100 : Math.round((epToSettle / 50) * 100) / 100;
       } else if (agreedOutturn && Number(agreedOutturn) > 0) {
-        bagsToSettle = Math.round((epToSettle / Number(agreedOutturn)) * 100) / 100;
-        weightToSettle = Math.round((bagsToSettle * 50) * 100) / 100;
+        weightToSettle = Math.round(((epToSettle / Number(agreedOutturn)) * 50) * 100) / 100;
+        bagsToSettle = totalAvailWeight > 0 ? Math.round((totalAvailBags * (weightToSettle / totalAvailWeight)) * 100) / 100 : Math.round((epToSettle / Number(agreedOutturn)) * 100) / 100;
       } else {
         const ratio = totalAvailEndProduct > 0 ? epToSettle / totalAvailEndProduct : 0;
         bagsToSettle = Math.round((totalAvailBags * ratio) * 100) / 100;
@@ -3468,10 +3561,10 @@ const dbController = {
       bagsToSettle = Math.min(Number(settleBags) || totalAvailBags, totalAvailBags);
       const ratio = totalAvailBags > 0 ? bagsToSettle / totalAvailBags : 0;
       weightToSettle = Math.round((totalAvailWeight * ratio) * 100) / 100;
-      if (isDirectWeight) {
+      if (isDirect) {
         epToSettle = weightToSettle;
       } else if (agreedOutturn && Number(agreedOutturn) > 0) {
-        epToSettle = Math.round((bagsToSettle * Number(agreedOutturn)) * 100) / 100;
+        epToSettle = Math.round(((weightToSettle / 50) * Number(agreedOutturn)) * 100) / 100;
       } else {
         epToSettle = Math.round((totalAvailEndProduct * ratio) * 100) / 100;
       }
@@ -3531,23 +3624,26 @@ const dbController = {
       const curRemEP = item.remainingEndProduct !== undefined ? Number(item.remainingEndProduct) : Number(item.endProductWeight || item.weight || 0);
       const curRemW = item.bags > 0 ? (curRemBags / item.bags) * (Number(item.weight) || (curRemBags * 50)) : Number(item.weight || (curRemBags * 50));
 
-      if (remainingEPToDeduct <= 0 && isDirectWeight && remainingBagsToDeduct <= 0) return;
+      if (remainingEPToDeduct <= 0 && isDirect && remainingBagsToDeduct <= 0) return;
 
       let deductEP = 0;
       let deductBags = 0;
       let deductW = 0;
 
-      if (isDirectWeight) {
-        deductBags = Math.min(curRemBags, remainingBagsToDeduct);
-        deductW = Math.min(curRemW, weightToSettle);
+      if (isDirect) {
+        const lotRatio = curRemW > 0 ? Math.min(1, remainingEPToDeduct / curRemW) : (curRemBags > 0 ? Math.min(1, remainingBagsToDeduct / curRemBags) : 1);
+        deductBags = Math.min(curRemBags, Math.round((curRemBags * lotRatio) * 100) / 100);
+        deductW = Math.min(curRemW, remainingEPToDeduct);
         deductEP = deductW;
         remainingBagsToDeduct = Math.max(0, remainingBagsToDeduct - deductBags);
+        remainingEPToDeduct = Math.max(0, remainingEPToDeduct - deductEP);
       } else {
         // Outturn-based commodity: Clean EP is the primary driver of deduction across storage lots
         deductEP = Math.min(curRemEP, remainingEPToDeduct);
         const lotOutturn = curRemW > 0 ? (curRemEP / (curRemW / 50)) : (curRemBags > 0 ? (curRemEP / curRemBags) : 26);
-        deductBags = lotOutturn > 0 ? Math.round((deductEP / lotOutturn) * 100) / 100 : curRemBags;
-        deductW = Math.round((deductBags * 50) * 100) / 100;
+        const rawNeeded = lotOutturn > 0 ? (deductEP / lotOutturn) * 50 : deductEP;
+        deductW = Math.min(curRemW, Math.round(rawNeeded * 100) / 100);
+        deductBags = curRemW > 0 ? Math.min(curRemBags, Math.round((curRemBags * (deductW / curRemW)) * 100) / 100) : (lotOutturn > 0 ? Math.round((deductEP / lotOutturn) * 100) / 100 : curRemBags);
         remainingEPToDeduct = Math.max(0, remainingEPToDeduct - deductEP);
       }
 

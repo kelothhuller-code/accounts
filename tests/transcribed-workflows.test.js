@@ -181,3 +181,143 @@ test('graded direct bill, display-number collision, cutting, and partial commitm
   const unposted = state.dispatches.filter(d => d.legacyDisplayNo === '231' || (d.weight === 7653 && d.rate === 385));
   assert.equal(unposted.length, 0);
 });
+
+test('settle Angel storage arrival against COM-PUR-0082 commitment', () => {
+  const { db, state } = isolate();
+  const angel = party(db, 'Angel');
+
+  const angelCom = db.addCommitment({
+    supplierId: angel.id,
+    supplierName: 'Angel',
+    date: '2026-10-27',
+    product: 'RCA',
+    quantity: facts.angel.commitment.quantity,
+    rate: facts.angel.commitment.rate,
+    type: 'end_product',
+    category: 'purchase',
+    legacyDisplayNo: facts.angel.commitment.legacyDisplayNo
+  }, false);
+
+  const angelArr = db.addArrival({
+    supplierId: angel.id,
+    supplierName: 'Angel',
+    date: facts.angel.date,
+    product: facts.angel.product,
+    vehicleNo: facts.angel.vehicleNo,
+    weight: facts.angel.weight,
+    bags: facts.angel.bags,
+    calculationBasis: 'direct',
+    rateType: 'storage',
+    rate: 0,
+    legacyDisplayNo: facts.angel.legacyDisplayNo,
+    tdsRate: 0,
+    tcsRate: 0
+  }, false);
+
+  assert.equal(angelArr.bags, 200);
+  assert.equal(angelArr.weight, 15000);
+  assert.equal(angelArr.remainingBags, 200);
+  assert.equal(angelArr.remainingEndProduct, 15000);
+
+  // Settle 200 bags / 15,000 kg against COM-PUR-0082
+  const settlement = db.settleStorageArrivals({
+    supplierId: angel.id,
+    supplierName: 'Angel',
+    settlementCategory: 'purchase_storage',
+    arrivalIds: [angelArr.id],
+    commitmentId: angelCom.id,
+    settleMode: 'end_product',
+    settleBags: 200,
+    settleWeight: 15000,
+    settleEndProduct: 15000,
+    agreedOutturn: 50,
+    isDirectWeight: true,
+    settlementRate: facts.angel.commitment.rate,
+    rateUnit: 'per_kg_ep',
+    settlementGrossAmount: 15000 * 384.6,
+    cgstRate: 0,
+    cgstAmount: 0,
+    sgstRate: 0,
+    sgstAmount: 0,
+    tcsRate: 0,
+    tcsAmount: 0,
+    tdsRate: 0.1,
+    tdsAmount: 5769,
+    settlementNetAmount: 5763231,
+    date: '2026-11-06',
+    notes: 'Settled Angel RCA 200 bags against COM-PUR-0082'
+  });
+
+  assert.equal(settlement.settledBags, 200);
+  assert.equal(settlement.settledWeight, 15000);
+  assert.equal(settlement.settledEndProduct, 15000);
+  assert.equal(settlement.settlementGrossAmount, 5769000);
+  assert.equal(settlement.tdsAmount, 5769);
+  assert.equal(settlement.settlementNetAmount, 5763231);
+
+  // Check arrival status and remaining quantities
+  const updatedArr = state.arrivals.find(a => a.id === angelArr.id);
+  assert.equal(updatedArr.status, 'settled');
+  assert.equal(updatedArr.remainingBags, 0);
+  assert.equal(updatedArr.remainingEndProduct, 0);
+  assert.equal(updatedArr.settledBags, 200);
+  assert.equal(updatedArr.settledEndProduct, 15000);
+
+  // Check commitment deduction
+  const updatedCom = state.commitments.find(c => c.id === angelCom.id);
+  assert.equal(updatedCom.fulfilledQty, 15000);
+  assert.equal(updatedCom.remainingQty, 5000);
+  assert.equal(updatedCom.status, 'active');
+});
+
+test('updateArrival transitions storage arrival to commitment bill', () => {
+  const { db, state } = isolate();
+  const angel = party(db, 'Angel 2');
+
+  const com = db.addCommitment({
+    supplierId: angel.id,
+    supplierName: 'Angel 2',
+    date: '2026-10-27',
+    product: 'RCA',
+    quantity: 20000,
+    rate: 384.6,
+    type: 'end_product',
+    category: 'purchase'
+  }, false);
+
+  const arr = db.addArrival({
+    supplierId: angel.id,
+    supplierName: 'Angel 2',
+    date: '2026-11-06',
+    product: 'RCA',
+    weight: 15000,
+    bags: 200,
+    calculationBasis: 'direct',
+    rateType: 'storage',
+    rate: 0
+  }, false);
+
+  assert.equal(arr.status, 'storage');
+  assert.equal(arr.netAmount, 0);
+
+  // Update arrival from storage to commitment
+  const updated = db.updateArrival(arr.id, {
+    rateType: 'commitment',
+    commitmentId: com.id,
+    rate: 384.6,
+    tdsRate: 0.1,
+    tcsRate: 0
+  });
+
+  assert.equal(updated.status, 'billed');
+  assert.equal(updated.rateType, 'commitment');
+  assert.equal(updated.commitmentId, com.id);
+  assert.equal(updated.billAmount, 5769000);
+  assert.equal(updated.tdsAmount, 5769);
+  assert.equal(updated.netAmount, 5763231);
+
+  // Commitment fulfilledQty should be updated
+  const comAfter = state.commitments.find(c => c.id === com.id);
+  assert.equal(comAfter.fulfilledQty, 15000);
+  assert.equal(comAfter.remainingQty, 5000);
+});
