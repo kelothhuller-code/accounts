@@ -380,7 +380,7 @@ export default function DispatchEntryModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '840px' }} onClick={e => e.stopPropagation()}>
+      <div className="modal-content" style={{ maxWidth: '860px' }} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title">
             <span style={{ fontSize: '1.3rem' }}>{isEditMode ? '✏️' : '📤'}</span>
@@ -551,8 +551,8 @@ export default function DispatchEntryModal({
             )}
           </div>
 
-          {/* Weight, Bags, Outturn Calculations */}
-          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1.2fr' }}>
+          {/* Weight, Bags, Outturn & Clean EP Calculations */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
             <div className="form-group">
               <label className="form-label">Gross Weight (kg) *</label>
               <input
@@ -579,7 +579,7 @@ export default function DispatchEntryModal({
             </div>
 
             <div className="form-group" style={{ opacity: isDirectBasis ? 0.6 : 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <label className="form-label">
                   Outturn (OT) {isDirectBasis ? '(Direct 50kg)' : '*'}
                 </label>
@@ -614,12 +614,14 @@ export default function DispatchEntryModal({
             </div>
 
             <div className="form-group">
-              <label className="form-label">Clean EP Weight (kg) *</label>
+              <label className="form-label" style={{ fontWeight: 700, color: '#2563eb' }}>
+                Clean EP Weight (kg) *
+              </label>
               <input
                 type="number"
                 step="any"
                 className="form-control num-input"
-                style={{ fontWeight: 700, color: '#2563eb' }}
+                style={{ fontWeight: 700, color: '#2563eb', border: '1.5px solid #93c5fd' }}
                 placeholder="e.g. 5000"
                 value={endProductWeight}
                 onChange={e => handleEpChange(e.target.value)}
