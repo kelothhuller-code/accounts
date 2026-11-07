@@ -5,7 +5,9 @@ const { dbController, dbState } = require('./db');
 const { startBotApiServer } = require('./botApi');
 
 let mainWindow = null;
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const isDev = process.env.ELECTRON_USE_DIST === '1'
+  ? false
+  : (process.env.NODE_ENV === 'development' || !app.isPackaged);
 
 function createWindow() {
   mainWindow = new BrowserWindow({

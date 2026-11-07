@@ -1,20 +1,29 @@
 # Local performance
 
-Measured on this workspace with Node v22.23.4, Linux x64, isolated temp JSON files, and MongoDB disabled. No production store and no network call. Figures are from `tests/results/benchmark.json` produced by `tests/performance.test.js` at 2026-11-07T06:35:10.386Z.
+Measured on this workspace with Node v22.23.4, Linux x64, isolated temp JSON files, and MongoDB disabled. No production store and no network call. Figures are from `tests/results/benchmark.json` produced by `tests/performance.test.js` at 2026-11-07T06:44:56.943Z.
 
-| Records | Save (full rewrite) | Search page of 25 | Dashboard scan | One-party ledger | File | RSS |
+| Records | Full-file save | Search page of 25 | Dashboard scan | One-party ledger | File | RSS after save |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10,000 | 27.48 ms | 2.95 ms | 4.55 ms | 5.73 ms | 3.71 MB | 102 MB |
-| 100,000 | 176.11 ms | 26.10 ms | 8.01 ms | 14.86 ms | 37.26 MB | 171 MB |
-| 500,000 | 1,141.83 ms | 82.10 ms | 23.98 ms | 74.75 ms | 187.14 MB | 336 MB |
+| 10,000 | 26.78 ms | 3.06 ms | 4.51 ms | 5.69 ms | 3.71 MB | 102 MB |
+| 100,000 | 165.88 ms | 21.43 ms | 7.28 ms | 13.83 ms | 37.26 MB | 170 MB |
+| 500,000 | 1,061.18 ms | 79.63 ms | 20.99 ms | 71.91 ms | 187.14 MB | 340 MB |
 
-Save heap growth was about 6 MB, 39 MB, and 202 MB at those sizes because the whole document is still serialized. `flushLocalNow` reported `waitedForNetwork: false` on every run. Five hundred domain arrival inserts took 2.58 ms in memory; flushing the 500,000-row store afterwards took 937.91 ms.
+Save heap growth was 6.10 MB, 38.57 MB, and 202.40 MB because the whole document is still serialized. `waitedForNetwork` was false on every flush.
+
+After the 500,000-row store already existed, further domain inserts and one full rewrite:
+
+| Batch | Insert time | Following full-file flush | 2026 full-year dashboard | Peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| 100 arrivals | 0.96 ms | 772.84 ms | 54.94 ms | 516 MB |
+| 1,000 arrivals | 4.00 ms | 769.11 ms | 84.41 ms | 357 MB |
+
+Five hundred single-style inserts took 2.54 ms in memory; flushing that 500,000-row file took 913.24 ms. The flush time is the JSON rewrite, not the insert loop. It does not get cheaper per row once the file is large.
 
 The first save of a calendar day also writes one backup copy. Later saves the same day do not.
 
 ## What changed
 
-Arrival and dispatch screens request one page plus a summary instead of shipping every row to the table. Search still scans the in-memory array; at 100,000 rows a paged search returned 25 of 5,883 matches in 26.10 ms. Disk format is still one JSON file, so a save rewrites the whole file and does not wait on MongoDB.
+Arrival and dispatch screens request one page plus a summary instead of shipping every row to the table. Search still scans the in-memory array; at 100,000 rows a paged search returned 25 of 5,883 matches in 21.43 ms. Disk format is still one JSON file, so a save rewrites the whole file and does not wait on MongoDB. A page of 25 does not shrink the summary: tests check page totals against the full filtered set.
 
 ## Limit
 

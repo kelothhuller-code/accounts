@@ -17,6 +17,9 @@ function authorize(req) {
   if (fetchSite && fetchSite !== 'none') {
     return { status: 403, error: 'Forbidden: browser fetch is not accepted.' };
   }
+  if (req.headers['x-commodity-bot'] !== '1') {
+    return { status: 403, error: 'Forbidden: local calls must send X-Commodity-Bot: 1. Browser pages cannot set this without a blocked preflight.' };
+  }
   const required = process.env.COMMODITY_BOT_TOKEN;
   if (required && req.headers['x-commodity-bot-token'] !== required) {
     return { status: 401, error: 'Unauthorized: X-Commodity-Bot-Token does not match COMMODITY_BOT_TOKEN.' };

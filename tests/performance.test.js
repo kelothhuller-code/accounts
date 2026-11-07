@@ -107,6 +107,41 @@ test('local save, search, and report timings on synthetic data', () => {
     runs,
     domainInserts: { count: 500, elapsedMs: domain.elapsedMs, flushMs: flush.elapsedMs, waitedForNetwork: flush.value.waitedForNetwork }
   };
+  const batches = [];
+  for (const count of [100, 1000]) {
+    const batchParty = party(db, `Batch ${count}`);
+    const startedRss = process.memoryUsage().rss;
+    const measured = time(() => {
+      for (let i = 0; i < count; i++) {
+        db.addArrival({
+          supplierId: batchParty.id,
+          supplierName: batchParty.name,
+          date: '2026-06-15',
+          product: 'RCA',
+          calculationBasis: 'direct',
+          weight: 12,
+          bags: 1,
+          rate: 8,
+          cgstRate: 2.5,
+          sgstRate: 2.5,
+          igstRate: 5,
+          tdsRate: 0.1,
+          tcsRate: 0.1
+        }, false);
+      }
+    });
+    const flush = time(() => db.flushLocalNow());
+    const range = time(() => db.getDashboardMetrics({ startDate: '2026-01-01', endDate: '2026-12-31' }));
+    batches.push({
+      count,
+      insertMs: measured.elapsedMs,
+      flushMs: flush.elapsedMs,
+      waitedForNetwork: flush.value.waitedForNetwork,
+      rangeReportMs: range.elapsedMs,
+      peakRssMb: Math.round((Math.max(startedRss, process.memoryUsage().rss) / 1048576) * 100) / 100
+    });
+  }
+  report.batches = batches;
   fs.writeFileSync(path.join(outDir, 'benchmark.json'), JSON.stringify(report, null, 2));
   assert.ok(runs[0].saveMs >= 0);
   assert.ok(runs[1].saveMs >= 0);

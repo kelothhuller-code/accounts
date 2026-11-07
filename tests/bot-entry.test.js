@@ -1,8 +1,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const http = require('http');
 const { isolate, party } = require('./support');
 const { previewRequest, commitRequest } = require('../electron/botEntry');
+
+function commitFresh(db, state, body) {
+  const preview = previewRequest(state, body);
+  if (!preview.ok) return { ok: false, status: 422, errors: preview.errors, preview };
+  const sent = { ...body, stateToken: preview.stateToken };
+  const result = commitRequest(db, state, sent);
+  result.sent = sent;
+  return result;
+}
 const { createBotApiServer } = require('../electron/botApi');
 const facts = require('./fixtures/transcribedRealRecords');
 
@@ -77,7 +89,7 @@ test('commit is atomic, idempotent, and does not overwrite on retry', () => {
       legacyDisplayNo: 'COM-PUR0169'
     })]
   };
-  const first = commitRequest(db, state, body);
+  const first = commitFresh(db, state, body);
   assert.equal(first.ok, true);
   assert.equal(first.result.saved.length, 1);
   assert.ok(first.result.saved[0].id);
@@ -90,7 +102,7 @@ test('commit is atomic, idempotent, and does not overwrite on retry', () => {
   assert.equal(state.commitments[0].fulfilledQty, 50);
   assert.equal(state.commitments[0].remainingQty, 0);
 
-  const replay = commitRequest(db, state, body);
+  const replay = commitRequest(db, state, first.sent);
   assert.equal(replay.replayed, true);
   assert.equal(state.arrivals.length, 1);
 
@@ -104,7 +116,7 @@ test('failed commit rolls back and display numbers are not idempotency keys', ()
   const { db, state } = isolate();
   party(db, 'YAS');
   party(db, 'HASHIM');
-  const rolled = commitRequest(db, state, {
+  const rolled = commitFresh(db, state, {
     idempotencyKey: 'req-rollback-0001',
     confirmations: { cashSales: true, storageBooking: true },
     entries: [
@@ -189,7 +201,7 @@ test('duplicate preflight and Kamadhenu do-not-post', () => {
   });
   assert.equal(preview.ok, true);
   assert.equal(preview.entries[0].notPosted, true);
-  const committed = commitRequest(db, state, {
+  const committed = commitFresh(db, state, {
     idempotencyKey: 'req-kamadhenu-skip-1',
     entries: preview.entries[0].input ? [preview.entries[0].input] : [{
       kind: 'dispatch',
@@ -217,7 +229,7 @@ test('local bot HTTP rejects browser origin and serves preview without cloud syn
       host: '127.0.0.1',
       port,
       path: '/api/bot/schema',
-      headers: { Origin: 'https://example.test' }
+      headers: { Origin: 'https://example.test', 'X-Commodity-Bot': '1' }
     }, res => {
       res.resume();
       resolve(res.statusCode);
@@ -226,16 +238,23 @@ test('local bot HTTP rejects browser origin and serves preview without cloud syn
   });
   assert.equal(originStatus, 403);
 
-  const gone = await fetch(`http://127.0.0.1:${port}/api/arrivals`, {
+  const noHeader = await fetch(`http://127.0.0.1:${port}/api/bot/preview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  assert.equal(noHeader.status, 403);
+
+  const gone = await fetch(`http://127.0.0.1:${port}/api/arrivals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Commodity-Bot': '1' },
     body: '{}'
   });
   assert.equal(gone.status, 410);
 
   const preview = await fetch(`http://127.0.0.1:${port}/api/bot/preview`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Commodity-Bot': '1' },
     body: JSON.stringify({
       entries: [baseEntry({
         party: 'NATESH',
@@ -249,4 +268,54 @@ test('local bot HTTP rejects browser origin and serves preview without cloud syn
   assert.equal(body.ok, false);
   assert.equal(state.arrivals.length, 0);
   server.close();
+});
+
+test('preview persists nothing, stale token does not overwrite, and rollback restores the file', () => {
+  const { db, state } = isolate();
+  party(db, 'Deepak');
+  db.flushLocalNow();
+  const before = JSON.stringify(state);
+  const fileBefore = Buffer.from(db.readLocalFile());
+  const countersBefore = JSON.stringify(state.counters || {});
+  const preview = previewRequest(state, { entries: [baseEntry({ party: 'Deepak', billing: 'cash' })] });
+  assert.equal(preview.ok, false);
+  const storagePreview = previewRequest(state, {
+    confirmations: { cashSales: true },
+    entries: [baseEntry({ party: 'Deepak', billing: 'cash' })]
+  });
+  assert.equal(storagePreview.ok, true);
+  assert.equal(JSON.stringify(state), before);
+  assert.equal(JSON.stringify(state.counters || {}), countersBefore);
+  assert.ok(fileBefore.equals(db.readLocalFile()));
+
+  const body = {
+    idempotencyKey: 'req-freshness-0001',
+    confirmations: { cashSales: true },
+    entries: [baseEntry({ party: 'Deepak', billing: 'cash', clientRef: 'cash-1' })]
+  };
+  const token = storagePreview.stateToken;
+  party(db, 'Someone Else');
+  const stale = commitRequest(db, state, { ...body, stateToken: token });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.errors[0].code, 'STALE_PREVIEW');
+  assert.equal(state.arrivals.length, 0);
+
+  const freshPreview = previewRequest(state, body);
+  process.env.COMMODITY_TEST_FLUSH = 'throw-after';
+  const failed = commitRequest(db, state, { ...body, stateToken: freshPreview.stateToken });
+  delete process.env.COMMODITY_TEST_FLUSH;
+  assert.equal(failed.rolledBack, true);
+  assert.equal(state.arrivals.length, 0);
+  assert.ok(fileBefore.equals(db.readLocalFile()));
+
+  const ok = commitFresh(db, state, body);
+  assert.equal(ok.ok, true);
+  const savedPath = db.localFilePath();
+  const bytes = fs.readFileSync(savedPath);
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-restart-'));
+  fs.writeFileSync(path.join(dir2, 'commodity_store.json'), bytes);
+  db.loadIsolated(dir2);
+  const replay = commitRequest(db, state, ok.sent);
+  assert.equal(replay.replayed, true);
+  assert.equal(state.arrivals.length, 1);
 });

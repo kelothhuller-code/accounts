@@ -518,7 +518,22 @@ function previewRequest(dbState, body) {
     });
   });
 
-  return { ok: errors.length === 0, errors, entries: previews };
+  return { ok: errors.length === 0, errors, entries: previews, stateToken: stateToken(dbState) };
+}
+
+function stateToken(dbState) {
+  const pack = (rows, fields) => (rows || []).map(row => fields.map(field => row[field] == null ? '' : row[field]).join('\t')).join('\n');
+  const body = JSON.stringify({
+    counters: dbState.counters || {},
+    suppliers: pack(dbState.suppliers, ['id', 'name']),
+    arrivals: pack(dbState.arrivals, ['id', 'updatedAt', 'status', 'remainingEndProduct', 'remainingBags', 'netAmount']),
+    dispatches: pack(dbState.dispatches, ['id', 'updatedAt', 'status', 'remainingEndProduct', 'netAmount']),
+    commitments: pack(dbState.commitments, ['id', 'fulfilledQty', 'remainingQty', 'status']),
+    epTransfers: pack(dbState.epTransfers, ['id', 'endProductWeight', 'transferValue']),
+    settlements: (dbState.settlements || []).length,
+    payments: (dbState.payments || []).length
+  });
+  return crypto.createHash('sha256').update(body).digest('hex');
 }
 
 function snapshotState(dbState) {
@@ -557,10 +572,34 @@ function commitRequest(dbController, dbState, body, hooks = {}) {
     return { ok: true, status: 200, replayed: true, result: prior.result };
   }
 
+  if (!body.stateToken || typeof body.stateToken !== 'string') {
+    return {
+      ok: false,
+      status: 409,
+      errors: [{ code: 'PREVIEW_REQUIRED', message: 'Commit requires the stateToken from a preview of the current books. Nothing was written.' }]
+    };
+  }
+  const currentToken = stateToken(dbState);
+  if (body.stateToken !== currentToken) {
+    return {
+      ok: false,
+      status: 409,
+      errors: [{ code: 'STALE_PREVIEW', message: 'The books changed after preview. Preview again. Nothing was written.' }]
+    };
+  }
+
   const preview = previewRequest(dbState, body);
   if (!preview.ok) return { ok: false, status: 422, errors: preview.errors, preview };
+  if (preview.stateToken !== currentToken) {
+    return {
+      ok: false,
+      status: 409,
+      errors: [{ code: 'STALE_PREVIEW', message: 'Preview changed the books. Nothing was written.' }]
+    };
+  }
 
   const snap = snapshotState(dbState);
+  const previousFile = dbController.readLocalFile ? dbController.readLocalFile() : null;
   const saved = [];
   try {
     if (hooks.beforeWrite) hooks.beforeWrite();
@@ -619,6 +658,7 @@ function commitRequest(dbController, dbState, body, hooks = {}) {
     return { ok: true, status: 201, replayed: false, result };
   } catch (err) {
     restoreState(dbState, snap);
+    if (dbController.writeLocalFile) dbController.writeLocalFile(previousFile);
     if (hooks.afterRollback) hooks.afterRollback();
     return {
       ok: false,
@@ -660,5 +700,6 @@ module.exports = {
   commitRequest,
   resolveParty,
   assertIdempotencyKey,
-  payloadHash
+  payloadHash,
+  stateToken
 };

@@ -339,15 +339,12 @@ function epTransferStockAlreadyOnLots(trf, arrivals, dispatches) {
   return false;
 }
 
-function legacyTransferOutEp(partyId, product) {
+function productStorageOutEp(partyId, product) {
   let total = 0;
   for (const d of dbState.dispatches || []) {
-    if (!d.transferId) continue;
     if ((d.supplierId || d.partyId) !== partyId) continue;
     if (product && d.product !== product) continue;
     if (!(d.status === 'storage_out' || d.rateType === 'storage_out')) continue;
-    const trf = (dbState.epTransfers || []).find(t => t.id === d.transferId);
-    if (trf && Array.isArray(trf.allocations) && trf.allocations.length > 0) continue;
     const ep = d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : Number(d.endProductWeight || d.weight || 0);
     total += ep;
   }
@@ -400,7 +397,7 @@ function availableEpForTransfer(party, product, transferType) {
   const lotEp = lots.reduce((sum, lot) => sum + (Number(lot.remainingEndProduct) || 0), 0);
   if (transferType === 'store_out') return roundQty(lotEp);
   const opening = Number(party.openingStorageEP) || 0;
-  const legacyOut = legacyTransferOutEp(party.id, product);
+  const legacyOut = productStorageOutEp(party.id, product);
   return roundQty(opening + lotEp - legacyOut);
 }
 
@@ -438,7 +435,9 @@ function applyAllocation(allocation, sign) {
 function recognizeLegacyManualEpMove({ fromPartyId, toPartyId, endProductWeight, remarkNeedle } = {}) {
   const ep = Number(endProductWeight);
   const needle = String(remarkNeedle || '').trim().toLowerCase();
-  if (!fromPartyId || !toPartyId || !(ep > 0)) return { recognized: false, pairs: [], ambiguous: false };
+  if (!fromPartyId || !toPartyId || !(ep > 0)) {
+    return { recognized: false, paired: false, pairs: [], note: 'Same quantity or remarks are not an identity.' };
+  }
   const textOf = (doc) => `${doc.notes || ''} ${doc.remarks || ''} ${doc.legacyDisplayNo || ''}`.toLowerCase();
   const sources = (dbState.dispatches || []).filter(d => {
     if ((d.supplierId || d.partyId) !== fromPartyId) return false;
@@ -455,20 +454,26 @@ function recognizeLegacyManualEpMove({ fromPartyId, toPartyId, endProductWeight,
     const qty = a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0);
     return Math.abs(qty - ep) < 0.02;
   });
-  const pairs = [];
+  const observed = [];
   for (const source of sources) {
     for (const dest of dests) {
-      if (needle && !textOf(source).includes(needle) && !textOf(dest).includes(needle)) continue;
-      pairs.push({
+      const remarkHit = !needle || textOf(source).includes(needle) || textOf(dest).includes(needle);
+      if (!remarkHit) continue;
+      observed.push({
         sourceId: source.id,
         destId: dest.id,
         endProductWeight: ep,
-        sourceRemark: source.notes || source.remarks || '',
-        destRemark: dest.notes || dest.remarks || ''
+        paired: false
       });
     }
   }
-  return { recognized: pairs.length > 0, pairs, ambiguous: pairs.length > 1 };
+  return {
+    recognized: false,
+    paired: false,
+    pairs: [],
+    observed,
+    note: 'Quantity and remarks do not pair or repair manual rows. No ids were guessed.'
+  };
 }
 
 function queryNewest(records, match, filter, summarize) {
@@ -3104,22 +3109,9 @@ const dbController = {
     const rate = moneyMovement ? (Number(data.rate) || 0) : 0;
     const transferValue = moneyMovement ? roundQty(qty.endProductWeight * rate) : 0;
 
-    const legacy = recognizeLegacyManualEpMove({
-      fromPartyId: data.fromPartyId,
-      toPartyId: data.toPartyId,
-      endProductWeight: qty.endProductWeight,
-      remarkNeedle: data.remarkNeedle || data.notes || ''
-    });
-    if (legacy.recognized) {
-      const err = new Error('A legacy manual EP move for this party pair and quantity is already on the books. It will not be reposted or repaired automatically.');
-      err.code = 'LEGACY_MANUAL_TRANSFER';
-      err.legacy = legacy;
-      throw err;
-    }
-
     const lots = collectSourceLots(data.fromPartyId, product, transferType);
     const openingEp = transferType === 'store_in' ? (Number(fromParty.openingStorageEP) || 0) : 0;
-    const legacyOut = transferType === 'store_in' ? legacyTransferOutEp(data.fromPartyId, product) : 0;
+    const legacyOut = transferType === 'store_in' ? productStorageOutEp(data.fromPartyId, product) : 0;
     const planLots = lots.slice();
     if (openingEp > 0) {
       planLots.push({
@@ -5592,9 +5584,66 @@ const dbController = {
     };
   },
 
+  localFilePath() {
+    return localDbFile;
+  },
+
+  readLocalFile() {
+    if (!fs.existsSync(localDbFile)) return null;
+    return fs.readFileSync(localDbFile);
+  },
+
+  writeLocalFile(bytes) {
+    if (bytes == null) {
+      if (fs.existsSync(localDbFile)) fs.unlinkSync(localDbFile);
+      return;
+    }
+    fs.writeFileSync(localDbFile, bytes);
+  },
+
   flushLocalNow() {
+    if (process.env.COMMODITY_TEST_FLUSH === 'throw-before') {
+      throw new Error('simulated filesystem error before write');
+    }
     saveLocalDb({ immediate: true });
+    if (process.env.COMMODITY_TEST_FLUSH === 'throw-after') {
+      throw new Error('simulated filesystem error after write');
+    }
     return { saved: true, file: localDbFile, waitedForNetwork: false };
+  },
+
+  loadIsolated(dir) {
+    if (!dir) throw new Error('Isolated data directory is required.');
+    dataDir = dir;
+    localDbFile = path.join(dir, 'commodity_store.json');
+    oldDbFile = path.join(dir, 'coffee_store.json');
+    backupsDir = path.join(dir, 'backups');
+    archivesDir = path.join(dir, 'archives');
+    ensureStorageDirs();
+    const loaded = JSON.parse(fs.readFileSync(localDbFile, 'utf8'));
+    const fresh = blankState();
+    for (const key of Object.keys(dbState)) delete dbState[key];
+    Object.assign(dbState, fresh, loaded);
+    dbState.suppliers = loaded.suppliers || [];
+    dbState.products = loaded.products || [];
+    dbState.arrivals = loaded.arrivals || [];
+    dbState.dispatches = loaded.dispatches || [];
+    dbState.commitments = loaded.commitments || [];
+    dbState.settlements = loaded.settlements || [];
+    dbState.payments = loaded.payments || [];
+    dbState.partyBills = loaded.partyBills || [];
+    dbState.balanceAdjustments = loaded.balanceAdjustments || [];
+    dbState.epTransfers = loaded.epTransfers || [];
+    dbState.commitmentWashes = loaded.commitmentWashes || [];
+    dbState.millingLogs = loaded.millingLogs || [];
+    dbState.openingStockEntries = loaded.openingStockEntries || [];
+    dbState.counters = loaded.counters || {};
+    dbState.botIdempotency = loaded.botIdempotency || {};
+    dbState.settings = { ...fresh.settings, ...(loaded.settings || {}) };
+    isMongoConnected = false;
+    cloudSuspendDepth = 0;
+    rebuildProductIndices();
+    return { dataDir, localDbFile };
   },
 
   resetIsolated(dir) {

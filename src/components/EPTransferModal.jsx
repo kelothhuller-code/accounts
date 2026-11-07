@@ -65,7 +65,7 @@ export default function EPTransferModal({
           setSourceLots(lots);
           const openEP = Number(s.openingStorageEP) || 0;
           const legacyOut = (res.dispatches || [])
-            .filter(d => d.transferId && d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'))
+            .filter(d => d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'))
             .reduce((sum, d) => sum + (d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : Number(d.endProductWeight || d.weight || 0)), 0);
           const arrEP = lots.reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0)), 0);
           setAvailableEP(Math.max(0, openEP + arrEP - legacyOut));

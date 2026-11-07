@@ -170,8 +170,8 @@ test('legacy linked transfer is counted once and a manual SALAM pair is not repo
     bags: 134,
     weight: 9740,
     endProductWeight: 9740,
-    rate: 0,
-    transferValue: 0,
+    rate: 10,
+    transferValue: 1000,
     notes: 'legacy linked'
   });
   state.dispatches.push({
@@ -208,8 +208,20 @@ test('legacy linked transfer is counted once and a manual SALAM pair is not repo
     netAmount: 0,
     transferId: legacyId
   });
+  const beforeRead = JSON.stringify({
+    transfers: state.epTransfers,
+    dispatches: state.dispatches,
+    arrivals: state.arrivals
+  });
   assert.equal(storageEp(db, salam.id), 0);
   assert.equal(storageEp(db, hashim.id), 9740);
+  assert.equal(db.getSupplierDetails(salam.id).summary.transferFinancialNet, -1000);
+  assert.equal(db.getSupplierDetails(hashim.id).summary.transferFinancialNet, 1000);
+  assert.equal(JSON.stringify({
+    transfers: state.epTransfers,
+    dispatches: state.dispatches,
+    arrivals: state.arrivals
+  }), beforeRead);
 
   state.dispatches.push({
     id: 'disp_hand_salam',
@@ -249,10 +261,14 @@ test('legacy linked transfer is counted once and a manual SALAM pair is not repo
     endProductWeight: 9740,
     remarkNeedle: 'ARR0141'
   });
-  assert.equal(recognized.recognized, true);
-  assert.equal(recognized.pairs.some(p => p.sourceId === 'disp_hand_salam' && p.destId === 'arr_hand_hashim'), true);
-  assert.equal(recognized.pairs.every(p => p.sourceId !== source.id), true);
-  const countBefore = state.arrivals.length + state.dispatches.length + state.epTransfers.length;
+  assert.equal(recognized.recognized, false);
+  assert.equal(recognized.paired, false);
+  assert.deepEqual(recognized.pairs, []);
+  assert.equal(recognized.observed.some(row => row.sourceId === 'disp_hand_salam' && row.destId === 'arr_hand_hashim' && row.paired === false), true);
+  const handSource = state.dispatches.find(d => d.id === 'disp_hand_salam');
+  const handDest = state.arrivals.find(a => a.id === 'arr_hand_hashim');
+  assert.equal(handSource.transferId, undefined);
+  assert.equal(handDest.transferId, undefined);
   assert.throws(() => db.addEpTransfer({
     fromPartyId: salam.id,
     toPartyId: hashim.id,
@@ -260,8 +276,11 @@ test('legacy linked transfer is counted once and a manual SALAM pair is not repo
     bags: 134,
     endProductWeight: 9740,
     notes: salamToHashim.remark
-  }), /legacy manual/i);
-  assert.equal(state.arrivals.length + state.dispatches.length + state.epTransfers.length, countBefore);
+  }), /Insufficient/);
+  assert.equal(state.dispatches.find(d => d.id === 'disp_hand_salam').transferId, undefined);
+  assert.equal(state.arrivals.find(a => a.id === 'arr_hand_hashim').transferId, undefined);
+  assert.equal(state.epTransfers.filter(t => !t.id || t.id === 'trf_legacy_manual_shape').length >= 1, true);
+  assert.equal(state.epTransfers.some(t => t.notes === salamToHashim.remark), false);
 });
 
 test('optional money movement is explicit', () => {
@@ -283,4 +302,69 @@ test('optional money movement is explicit', () => {
   const dest = db.getArrivals().find(a => a.transferId === transfer.id);
   assert.equal(dest.netAmount, 0);
   assert.equal(dest.status, 'storage');
+});
+
+test('partial bags restore exactly, overdraw is per product, and later settlement blocks delete', () => {
+  const { db } = isolate();
+  const from = party(db, 'Lot Source');
+  const to = party(db, 'Lot Dest');
+  const coffee = storageArrival(db, from, { product: 'RC EP', date: '2026-01-01', bags: 10, weight: 1000, endProductWeight: 1000 });
+  const otherGrade = storageArrival(db, from, { product: 'RCA', date: '2026-01-02', bags: 8, weight: 800, endProductWeight: 800 });
+  const big = storageArrival(db, from, { product: 'RC EP', date: '2026-03-01', bags: 20, weight: 2000, endProductWeight: 2000 });
+  assert.throws(() => db.addEpTransfer({
+    fromPartyId: from.id,
+    toPartyId: to.id,
+    product: 'RC EP',
+    endProductWeight: 5000,
+    bags: 40
+  }), /Insufficient/);
+  assert.equal(db.getArrivals().find(a => a.id === coffee.id).remainingEndProduct, 1000);
+  assert.equal(db.getArrivals().find(a => a.id === otherGrade.id).remainingEndProduct, 800);
+
+  assert.throws(() => db.addEpTransfer({
+    fromPartyId: from.id,
+    toPartyId: to.id,
+    product: 'RC EP',
+    endProductWeight: 1500,
+    lotIds: [coffee.id]
+  }), /Shortfall|not an available/);
+  assert.equal(db.getArrivals().find(a => a.id === coffee.id).remainingBags, 10);
+  assert.equal(db.getArrivals().find(a => a.id === big.id).remainingEndProduct, 2000);
+
+  const moved = db.addEpTransfer({
+    fromPartyId: from.id,
+    toPartyId: to.id,
+    product: 'RC EP',
+    endProductWeight: 400,
+    bags: 3,
+    lotIds: [coffee.id]
+  });
+  assert.equal(moved.allocations[0].bags, 3);
+  assert.equal(moved.allocations[0].endProduct, 400);
+  assert.equal(db.getArrivals().find(a => a.id === coffee.id).remainingBags, 7);
+  assert.equal(db.getArrivals().find(a => a.id === coffee.id).remainingEndProduct, 600);
+  const later = storageArrival(db, from, { product: 'RC EP', date: '2026-08-01', bags: 1, weight: 50, endProductWeight: 50 });
+  db.deleteEpTransfer(moved.id);
+  const restored = db.getArrivals().find(a => a.id === coffee.id);
+  assert.equal(restored.remainingBags, 10);
+  assert.equal(restored.remainingEndProduct, 1000);
+  assert.equal(db.getArrivals().find(a => a.id === later.id).remainingEndProduct, 50);
+
+  const again = db.addEpTransfer({
+    fromPartyId: from.id,
+    toPartyId: to.id,
+    product: 'RC EP',
+    endProductWeight: 400,
+    bags: 3,
+    lotIds: [coffee.id]
+  });
+  const src = db.getArrivals().find(a => a.id === coffee.id);
+  src.settlementIds = ['set_after'];
+  src.settledEndProduct = 10;
+  const dest = db.getArrivals().find(a => a.id === again.destArrivalId);
+  const destBefore = dest.remainingEndProduct;
+  assert.throws(() => db.deleteEpTransfer(again.id), /later settlement/);
+  assert.equal(db.getArrivals().find(a => a.id === coffee.id).remainingEndProduct, 600);
+  assert.equal(db.getArrivals().find(a => a.id === coffee.id).remainingBags, 7);
+  assert.equal(db.getArrivals().find(a => a.id === again.destArrivalId).remainingEndProduct, destBefore);
 });

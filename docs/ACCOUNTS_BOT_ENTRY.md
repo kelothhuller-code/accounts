@@ -4,7 +4,11 @@ This is the supported way to prepare records faster than the forms. It uses the 
 
 The listener is `127.0.0.1:4820` inside the desktop app. It rejects any other address, any browser `Origin`, and any browser `Sec-Fetch-Site` other than `none`. There is no cross-origin header. If `COMMODITY_BOT_TOKEN` is set in the environment, requests must send the same value in `X-Commodity-Bot-Token`.
 
-Do not expose this port on a network. Accounts has not used the older direct `POST /api/arrivals` routes; those writes now return `410` and point here.
+Do not expose this port on a network. The desktop screens do not call this port. They save through the Electron IPC actions `arrivals:add`, `dispatches:add`, `commitments:add`, `payments:add`, and `ep-transfers:add`. A search of `src/` finds no `localhost:4820` and no `/api/arrivals` caller. Direct HTTP writes such as `POST /api/arrivals` return 410 so an old script cannot skip the preview gates. That 410 does not change the screens.
+
+Every request, including one with no `Origin`, must send `X-Commodity-Bot: 1`. A browser page that omits the header is rejected. A browser page that adds the header sends a preflight, which is also rejected, and an `Origin` header is rejected. A local program that sets the header can still call the port. Set `COMMODITY_BOT_TOKEN` in the environment if that local process must also present a token. The token is not stored in the repository and is not printed.
+
+`POST /api/bot/preview` does not write rows, counters, or the JSON file. `POST /api/bot/commit` requires the `stateToken` from that preview. If any row or party changed, commit returns 409 and writes nothing. One failed row, including a filesystem error during the save, restores the in-memory books and the previous file bytes. A successful commit stores the idempotency result in the JSON file, so a restart returns the original result instead of writing again.
 
 ## Routes
 
