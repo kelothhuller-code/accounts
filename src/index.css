@@ -526,6 +526,8 @@ th.num {
 }
 
 .form-control {
+  width: 100%;
+  box-sizing: border-box;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -533,6 +535,11 @@ th.num {
   color: var(--text-main);
   transition: all 0.15s ease;
   outline: none;
+}
+
+.form-control-sm {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
 }
 
 .form-control:focus {

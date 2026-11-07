@@ -860,28 +860,28 @@ export default function DispatchEntryModal({
 
             {/* Existing Returns Table */}
             {returns.length > 0 && (
-              <div style={{ overflowX: 'auto', marginBottom: showAddReturn ? '0.75rem' : 0 }}>
-                <table style={{ width: '100%', fontSize: '0.78rem', background: '#fff', borderRadius: '4px', borderCollapse: 'collapse' }}>
+              <div style={{ overflowX: 'auto', width: '100%', boxSizing: 'border-box', marginBottom: showAddReturn ? '0.75rem' : 0 }}>
+                <table style={{ width: '100%', minWidth: '100%', tableLayout: 'fixed', fontSize: '0.78rem', background: '#fff', borderRadius: '4px', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#fff1f2', borderBottom: '1px solid #fecdd3', color: '#881337', textAlign: 'left' }}>
-                      <th style={{ padding: '6px 8px' }}>Date</th>
-                      <th style={{ padding: '6px 8px' }}>Vehicle No</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Returned (kg)</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Bags</th>
-                      <th style={{ padding: '6px 8px' }}>Reason / Remarks</th>
-                      <th style={{ padding: '6px 8px', textAlign: 'center' }}>Action</th>
+                      <th style={{ width: '18%', padding: '6px 8px' }}>Date</th>
+                      <th style={{ width: '20%', padding: '6px 8px' }}>Vehicle No</th>
+                      <th style={{ width: '18%', padding: '6px 8px', textAlign: 'right' }}>Returned (kg)</th>
+                      <th style={{ width: '14%', padding: '6px 8px', textAlign: 'right' }}>Bags</th>
+                      <th style={{ width: '22%', padding: '6px 8px' }}>Reason / Remarks</th>
+                      <th style={{ width: '8%', padding: '6px 8px', textAlign: 'center' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {returns.map((ret, idx) => (
                       <tr key={ret.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '6px 8px' }}>{ret.date}</td>
-                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{ret.vehicleNo || '-'}</td>
+                        <td style={{ padding: '6px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ret.date}</td>
+                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ret.vehicleNo || '-'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#e11d48' }}>
                           {Number(ret.weight).toLocaleString()} kg
                         </td>
                         <td style={{ padding: '6px 8px', textAlign: 'right' }}>{ret.bags || 0}</td>
-                        <td style={{ padding: '6px 8px', color: '#475569' }}>{ret.reason || '-'}</td>
+                        <td style={{ padding: '6px 8px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ret.reason || '-'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                           <button
                             type="button"
@@ -899,7 +899,7 @@ export default function DispatchEntryModal({
               </div>
             )}
 
-            {/* New Return Form Input Rows */}
+            {/* New Return Form Input */}
             {showAddReturn && (
               <div style={{
                 background: '#fff',
@@ -910,38 +910,41 @@ export default function DispatchEntryModal({
                 boxSizing: 'border-box',
                 width: '100%'
               }}>
-                <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#9f1239', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#9f1239', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                   <span>↩️</span>
                   <span>Record New Return / Rejected Quantity</span>
                 </div>
 
-                {/* Row 1: Date, Vehicle, Weight, Bags */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.65rem' }}>
-                  <div>
+                {/* 2x2 Clean Grid for Inputs */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', width: '100%', boxSizing: 'border-box' }}>
+                  <div style={{ minWidth: 0 }}>
                     <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Return Date</label>
                     <input
                       type="date"
                       className="form-control form-control-sm"
+                      style={{ width: '100%', boxSizing: 'border-box' }}
                       value={newReturnDate}
                       onChange={e => setNewReturnDate(e.target.value)}
                     />
                   </div>
-                  <div>
-                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Return Vehicle</label>
+                  <div style={{ minWidth: 0 }}>
+                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Return Vehicle Number</label>
                     <input
                       type="text"
                       className="form-control form-control-sm"
-                      placeholder="e.g. KA-12-3456"
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                      placeholder="e.g. KA-12-AB-3456"
                       value={newReturnVehicle}
                       onChange={e => setNewReturnVehicle(e.target.value.toUpperCase())}
                     />
                   </div>
-                  <div>
-                    <label style={{ fontSize: '0.72rem', color: '#b91c1c', fontWeight: 700, display: 'block', marginBottom: '2px' }}>Return Wt (kg) *</label>
+                  <div style={{ minWidth: 0 }}>
+                    <label style={{ fontSize: '0.72rem', color: '#b91c1c', fontWeight: 700, display: 'block', marginBottom: '2px' }}>Return Weight (kg) *</label>
                     <input
                       type="number"
                       step="any"
                       className="form-control form-control-sm num-input"
+                      style={{ width: '100%', boxSizing: 'border-box', color: '#b91c1c', fontWeight: 700 }}
                       placeholder="e.g. 2000"
                       value={newReturnWeight}
                       onChange={e => {
@@ -953,12 +956,13 @@ export default function DispatchEntryModal({
                       }}
                     />
                   </div>
-                  <div>
-                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Bags (Wt ÷ 50)</label>
+                  <div style={{ minWidth: 0 }}>
+                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Return Bags (Weight ÷ 50)</label>
                     <input
                       type="number"
                       step="any"
                       className="form-control form-control-sm num-input"
+                      style={{ width: '100%', boxSizing: 'border-box' }}
                       placeholder="Auto"
                       value={newReturnBags}
                       onChange={e => setNewReturnBags(e.target.value)}
@@ -966,36 +970,37 @@ export default function DispatchEntryModal({
                   </div>
                 </div>
 
-                {/* Row 2: Reason & Action Buttons */}
-                <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-end', marginTop: '0.6rem' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Reason / Notes</label>
-                    <input
-                      type="text"
-                      className="form-control form-control-sm"
-                      placeholder="e.g. Excess dispatch returned / quality rejected"
-                      value={newReturnReason}
-                      onChange={e => setNewReturnReason(e.target.value)}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
-                      onClick={() => setShowAddReturn(false)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-danger"
-                      style={{ padding: '0.35rem 0.85rem', fontWeight: 700, fontSize: '0.75rem' }}
-                      onClick={handleAddReturn}
-                    >
-                      ✓ Apply Return
-                    </button>
-                  </div>
+                {/* Reason / Notes */}
+                <div style={{ marginTop: '0.65rem', width: '100%', boxSizing: 'border-box' }}>
+                  <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Reason / Quality Remarks</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    style={{ width: '100%', boxSizing: 'border-box' }}
+                    placeholder="e.g. Excess dispatch returned / quality rejected"
+                    value={newReturnReason}
+                    onChange={e => setNewReturnReason(e.target.value)}
+                  />
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                    onClick={() => setShowAddReturn(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger"
+                    style={{ padding: '0.35rem 0.95rem', fontWeight: 700, fontSize: '0.75rem' }}
+                    onClick={handleAddReturn}
+                  >
+                    ✓ Apply Return
+                  </button>
                 </div>
               </div>
             )}
