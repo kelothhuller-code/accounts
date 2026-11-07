@@ -343,7 +343,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         isDirectWeight,
         settlementRate: resolvedRate,
         rateUnit,
-        settlementGrossAmount,
+        settlementGrossAmount: grossSettlementAmount,
         cgstRate: numCgstRate,
         cgstAmount,
         sgstRate: numSgstRate,
@@ -352,7 +352,7 @@ export default function SettlementWizard({ prefilledSupplierId = null, onSettled
         tcsAmount,
         tdsRate: numTdsRate,
         tdsAmount,
-        settlementNetAmount,
+        settlementNetAmount: netSettlementAmount,
         date,
         notes
       };
