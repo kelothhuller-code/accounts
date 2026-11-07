@@ -1,0 +1,69 @@
+{
+  "measuredAt": "2026-11-07T06:44:56.943Z",
+  "node": "v22.23.4",
+  "platform": "linux",
+  "arch": "x64",
+  "note": "Isolated temp JSON store. No MongoDB and no production file. Full-file rewrite remains the save path.",
+  "runs": [
+    {
+      "records": 10000,
+      "saveMs": 26.78,
+      "saveHeapDeltaMb": 6.1,
+      "searchMs": 3.06,
+      "searchReturned": 25,
+      "searchTotal": 589,
+      "reportMs": 4.51,
+      "ledgerMs": 5.69,
+      "fileMb": 3.71,
+      "rssMb": 101.92
+    },
+    {
+      "records": 100000,
+      "saveMs": 165.88,
+      "saveHeapDeltaMb": 38.57,
+      "searchMs": 21.43,
+      "searchReturned": 25,
+      "searchTotal": 5883,
+      "reportMs": 7.28,
+      "ledgerMs": 13.83,
+      "fileMb": 37.26,
+      "rssMb": 169.6
+    },
+    {
+      "records": 500000,
+      "saveMs": 1061.18,
+      "saveHeapDeltaMb": 202.4,
+      "searchMs": 79.63,
+      "searchReturned": 25,
+      "searchTotal": 29412,
+      "reportMs": 20.99,
+      "ledgerMs": 71.91,
+      "fileMb": 187.14,
+      "rssMb": 340.46
+    }
+  ],
+  "domainInserts": {
+    "count": 500,
+    "elapsedMs": 2.54,
+    "flushMs": 913.24,
+    "waitedForNetwork": false
+  },
+  "batches": [
+    {
+      "count": 100,
+      "insertMs": 0.96,
+      "flushMs": 772.84,
+      "waitedForNetwork": false,
+      "rangeReportMs": 54.94,
+      "peakRssMb": 516.3
+    },
+    {
+      "count": 1000,
+      "insertMs": 4,
+      "flushMs": 769.11,
+      "waitedForNetwork": false,
+      "rangeReportMs": 84.41,
+      "peakRssMb": 357.06
+    }
+  ]
+}

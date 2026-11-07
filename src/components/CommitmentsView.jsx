@@ -18,7 +18,11 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import { dbAction } from '../utils/api';
 import SearchableSupplierSelect from './SearchableSupplierSelect';
@@ -36,6 +40,14 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
   const [productFilter, setProductFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isProductsExpanded, setIsProductsExpanded] = useState(false);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTabFilter, productFilter, searchQuery]);
 
   const [showWashModal, setShowWashModal] = useState(false);
 
@@ -284,6 +296,77 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
 
   const activePurchaseCount = commitments.filter(c => (c.category === 'purchase' || !c.category) && c.status === 'active' && Number(c.remainingQty) > 0).length;
   const activeSaleCount = commitments.filter(c => c.category === 'sale' && c.status === 'active' && Number(c.remainingQty) > 0).length;
+
+  const paginatedCommitments = filteredCommitments.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const renderPaginationControls = (totalItems) => {
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
+    const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(totalItems, currentPage * pageSize);
+
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '0.45rem 1rem', borderTop: '1px solid #e2e8f0' }}>
+        <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span>Showing <strong>{startItem} - {endItem}</strong> of <strong>{totalItems}</strong> contracts</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <span>Per page:</span>
+            <select 
+              value={pageSize} 
+              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+              style={{ border: '1px solid #cbd5e1', borderRadius: '4px', padding: '0.15rem 0.35rem', fontSize: '0.8rem', outline: 'none' }}
+            >
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ padding: '0.2rem 0.4rem' }}
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage(1)}
+            title="First Page"
+          >
+            <ChevronsLeft size={14} />
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ padding: '0.2rem 0.45rem' }}
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            title="Previous Page"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <span style={{ fontSize: '0.8rem', padding: '0 0.4rem', color: '#475569', fontWeight: 600 }}>
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ padding: '0.2rem 0.45rem' }}
+            disabled={currentPage >= totalPages}
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            title="Next Page"
+          >
+            <ChevronRight size={14} />
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ padding: '0.2rem 0.4rem' }}
+            disabled={currentPage >= totalPages}
+            onClick={() => setCurrentPage(totalPages)}
+            title="Last Page"
+          >
+            <ChevronsRight size={14} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -568,7 +651,7 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
               ) : filteredCommitments.length === 0 ? (
                 <tr><td colSpan="12" style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>No commitments matching active filter criteria.</td></tr>
               ) : (
-                filteredCommitments.map(c => {
+                paginatedCommitments.map(c => {
                   const isSale = c.category === 'sale';
                   const isClosed = c.status === 'closed' || c.status === 'completed' || c.status === 'fulfilled' || Number(c.remainingQty) <= 0;
                   const isWashed = c.status === 'washed';
@@ -639,6 +722,7 @@ export default function CommitmentsView({ onSelectSupplier, dataVersion = 0, onD
             </tbody>
           </table>
         </div>
+        {renderPaginationControls(filteredCommitments.length)}
       </div>
 
       {/* New/Edit Commitment Modal */}

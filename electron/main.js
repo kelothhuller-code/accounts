@@ -2,7 +2,8 @@ const { app, BrowserWindow, ipcMain, globalShortcut, dialog } = require('electro
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { dbController } = require('./db');
+const { dbController, dbState } = require('./db');
+const { startBotApiServer } = require('./botApi');
 
 let mainWindow = null;
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -130,170 +131,10 @@ function registerShortcuts() {
   });
 }
 
-// Local HTTP REST API server on 127.0.0.1:4820 for automated Bot data entry & external integrations
-function startBotApiServer() {
-  const PORT = 4820;
-  const server = http.createServer(async (req, res) => {
-    // Only accept connections from localhost
-    const remoteIp = req.socket.remoteAddress;
-    if (remoteIp !== '127.0.0.1' && remoteIp !== '::1' && remoteIp !== '::ffff:127.0.0.1') {
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'Forbidden: Bot API is local-only' }));
-    }
-
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      return res.end();
-    }
-
-    const parsedUrl = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
-    const pathname = parsedUrl.pathname;
-
-    const readJsonBody = () => new Promise((resolve, reject) => {
-      let data = '';
-      req.on('data', chunk => { data += chunk; });
-      req.on('end', () => {
-        try {
-          resolve(data ? JSON.parse(data) : {});
-        } catch (e) {
-          reject(new Error('Invalid JSON body: ' + e.message));
-        }
-      });
-      req.on('error', reject);
-    });
-
-    try {
-      if (req.method === 'GET' && pathname === '/api/status') {
-        const status = dbController.getStatus();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: 'ok', serverTime: new Date().toISOString(), ...status }));
-      }
-
-      if (req.method === 'GET' && pathname === '/api/products') {
-        const prods = dbController.getProducts();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(prods));
-      }
-
-      if (req.method === 'GET' && pathname === '/api/suppliers') {
-        const sups = dbController.getSuppliers();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(sups));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/arrivals') {
-        const body = await readJsonBody();
-        const result = dbController.addArrival(body);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'arrivals' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/arrivals/bulk') {
-        const body = await readJsonBody();
-        const items = Array.isArray(body) ? body : (body.items || []);
-        const result = dbController.bulkAddArrivals(items);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'arrivals' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/dispatches') {
-        const body = await readJsonBody();
-        const result = dbController.addDispatch(body);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'dispatches' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/dispatches/bulk') {
-        const body = await readJsonBody();
-        const items = Array.isArray(body) ? body : (body.items || []);
-        const result = dbController.bulkAddDispatches(items);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'dispatches' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/suppliers') {
-        const body = await readJsonBody();
-        const result = dbController.addSupplier(body);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'suppliers' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/suppliers/bulk') {
-        const body = await readJsonBody();
-        const items = Array.isArray(body) ? body : (body.items || []);
-        const result = dbController.bulkAddSuppliers(items);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'suppliers' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/payments') {
-        const body = await readJsonBody();
-        const result = dbController.addPayment(body);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'payments' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      if (req.method === 'POST' && pathname === '/api/payments/bulk') {
-        const body = await readJsonBody();
-        const items = Array.isArray(body) ? body : (body.items || []);
-        const result = dbController.bulkAddPayments(items);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('data-updated', { type: 'payments' });
-        }
-        res.writeHead(201, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(result));
-      }
-
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `Not found: ${pathname}` }));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message || 'Internal bot api error' }));
-    }
-  });
-
-  server.listen(PORT, '127.0.0.1', () => {
-    console.log(`🤖 Bot Data Entry REST API active on http://127.0.0.1:${PORT}`);
-  });
-
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn(`Bot API port ${PORT} already in use, skipping bot server.`);
-    } else {
-      console.error('Bot API Server error:', err);
-    }
-  });
-}
-
 app.whenReady().then(() => {
   createWindow();
   registerShortcuts();
-  startBotApiServer();
+  startBotApiServer({ dbController, dbState, getMainWindow: () => mainWindow, port: 4820, host: '127.0.0.1' });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
