@@ -39,6 +39,18 @@ export default function ArrivalEntryModal({
   const [outturnType, setOutturnType] = useState('per_50kg'); // 'per_50kg' or 'percentage'
   const [endProductWeight, setEndProductWeight] = useState('');
 
+  // Returns & Rejections Tracking
+  const [returns, setReturns] = useState([]);
+  const [originalWeight, setOriginalWeight] = useState('');
+  const [originalBags, setOriginalBags] = useState('');
+  const [originalEndProductWeight, setOriginalEndProductWeight] = useState('');
+  const [showAddReturn, setShowAddReturn] = useState(false);
+  const [newReturnDate, setNewReturnDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newReturnVehicle, setNewReturnVehicle] = useState('');
+  const [newReturnWeight, setNewReturnWeight] = useState('');
+  const [newReturnBags, setNewReturnBags] = useState('');
+  const [newReturnReason, setNewReturnReason] = useState('');
+
   // Pricing & Accounting State
   const [rateType, setRateType] = useState('fixed'); // 'fixed', 'commitment', 'storage'
   const [commitmentId, setCommitmentId] = useState('');
@@ -71,6 +83,29 @@ export default function ArrivalEntryModal({
     setOutturn(String(arr.outturn || '26'));
     setOutturnType(arr.outturnType || 'per_50kg');
     setEndProductWeight(arr.endProductWeight !== undefined && arr.endProductWeight !== null ? String(arr.endProductWeight) : (arr.weight ? String(arr.weight) : ''));
+
+    const editReturns = Array.isArray(arr.returns) ? arr.returns : [];
+    setReturns(editReturns);
+    const totRetW = editReturns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const totRetB = editReturns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const totRetEP = editReturns.reduce((s, r) => s + (Number(r.endProductWeight) || Number(r.weight) || 0), 0);
+
+    const origW = arr.originalWeight !== undefined && arr.originalWeight !== null
+      ? arr.originalWeight
+      : (totRetW > 0 ? (Number(arr.weight) || 0) + totRetW : (arr.weight || ''));
+    setOriginalWeight(origW !== '' ? String(origW) : '');
+
+    const origB = arr.originalBags !== undefined && arr.originalBags !== null
+      ? arr.originalBags
+      : (totRetB > 0 ? (Number(arr.bags) || 0) + totRetB : (arr.bags || ''));
+    setOriginalBags(origB !== '' ? String(origB) : '');
+
+    const origEP = arr.originalEndProductWeight !== undefined && arr.originalEndProductWeight !== null
+      ? arr.originalEndProductWeight
+      : (totRetEP > 0 ? (Number(arr.endProductWeight) || 0) + totRetEP : (arr.endProductWeight || ''));
+    setOriginalEndProductWeight(origEP !== '' ? String(origEP) : '');
+    setShowAddReturn(false);
+
     setRateType(arr.rateType || 'fixed');
     setRateUnit(arr.rateUnit || 'per_kg_ep');
     setRate(String(arr.rate || ''));
@@ -178,6 +213,81 @@ export default function ArrivalEntryModal({
       const calcOT = outturnType === 'percentage' ? ((numE / numWeight) * 100).toFixed(2) : ((numE / (numWeight / 50))).toFixed(2);
       setOutturn(String(calcOT));
     }
+  };
+
+  const totalReturnedWeight = returns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+  const totalReturnedBags = returns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+  const totalReturnedEP = returns.reduce((s, r) => s + (Number(r.endProductWeight) || Number(r.weight) || 0), 0);
+
+  const handleAddReturn = () => {
+    const rWeight = parseFloat(newReturnWeight);
+    if (!rWeight || rWeight <= 0) {
+      alert('Please enter a valid returned weight in kg');
+      return;
+    }
+    const rBags = parseFloat(newReturnBags) || (Math.round((rWeight / 50) * 100) / 100);
+    let rEP = rWeight;
+    if (!isDirectBasis && numWeight > 0 && numEP > 0) {
+      rEP = Math.round((rWeight * (numEP / (numWeight || 1))) * 100) / 100;
+    }
+
+    const currentBaseOrigW = originalWeight !== '' ? parseFloat(originalWeight) : (numWeight + totalReturnedWeight);
+    const currentBaseOrigB = originalBags !== '' ? parseFloat(originalBags) : (numBags + totalReturnedBags);
+    const currentBaseOrigEP = originalEndProductWeight !== '' ? parseFloat(originalEndProductWeight) : (numEP + totalReturnedEP);
+
+    const newRetItem = {
+      id: 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      date: newReturnDate || new Date().toISOString().split('T')[0],
+      vehicleNo: (newReturnVehicle || '').trim().toUpperCase(),
+      weight: rWeight,
+      bags: rBags,
+      endProductWeight: rEP,
+      reason: (newReturnReason || '').trim() || 'Store In Return / Rejection to Supplier',
+      createdAt: new Date().toISOString()
+    };
+
+    const nextReturns = [...returns, newRetItem];
+    const nextTotalRetW = nextReturns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const nextTotalRetB = nextReturns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const nextTotalRetEP = nextReturns.reduce((s, r) => s + (Number(r.endProductWeight) || Number(r.weight) || 0), 0);
+
+    const newNetW = Math.max(0, Math.round((currentBaseOrigW - nextTotalRetW) * 100) / 100);
+    const newNetB = Math.max(0, Math.round((currentBaseOrigB - nextTotalRetB) * 100) / 100);
+    const newNetEP = Math.max(0, Math.round((currentBaseOrigEP - nextTotalRetEP) * 100) / 100);
+
+    setReturns(nextReturns);
+    setOriginalWeight(String(currentBaseOrigW));
+    setOriginalBags(String(currentBaseOrigB));
+    setOriginalEndProductWeight(String(currentBaseOrigEP));
+    setWeight(String(newNetW));
+    setBags(String(newNetB));
+    setEndProductWeight(String(newNetEP));
+
+    setNewReturnWeight('');
+    setNewReturnBags('');
+    setNewReturnVehicle('');
+    setNewReturnReason('');
+    setShowAddReturn(false);
+  };
+
+  const handleRemoveReturn = (returnId) => {
+    const nextReturns = returns.filter(r => r.id !== returnId);
+    const currentBaseOrigW = originalWeight !== '' ? parseFloat(originalWeight) : (numWeight + totalReturnedWeight);
+    const currentBaseOrigB = originalBags !== '' ? parseFloat(originalBags) : (numBags + totalReturnedBags);
+    const currentBaseOrigEP = originalEndProductWeight !== '' ? parseFloat(originalEndProductWeight) : (numEP + totalReturnedEP);
+
+    const nextTotalRetW = nextReturns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const nextTotalRetB = nextReturns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const nextTotalRetEP = nextReturns.reduce((s, r) => s + (Number(r.endProductWeight) || Number(r.weight) || 0), 0);
+
+    const newNetW = Math.max(0, Math.round((currentBaseOrigW - nextTotalRetW) * 100) / 100);
+    const newNetB = Math.max(0, Math.round((currentBaseOrigB - nextTotalRetB) * 100) / 100);
+    const newNetEP = Math.max(0, Math.round((currentBaseOrigEP - nextTotalRetEP) * 100) / 100);
+
+    setReturns(nextReturns);
+    setWeight(String(newNetW));
+    setBags(String(newNetB));
+    setEndProductWeight(String(newNetEP));
   };
 
   // Calculations
@@ -305,6 +415,12 @@ export default function ArrivalEntryModal({
       outturn: isDirectBasis ? 50 : numOutturn,
       outturnType,
       endProductWeight: numEP,
+      originalWeight: originalWeight !== '' ? parseFloat(originalWeight) : (totalReturnedWeight > 0 ? numWeight + totalReturnedWeight : numWeight),
+      originalBags: originalBags !== '' ? parseFloat(originalBags) : (totalReturnedBags > 0 ? numBags + totalReturnedBags : numBags),
+      originalEndProductWeight: originalEndProductWeight !== '' ? parseFloat(originalEndProductWeight) : (totalReturnedWeight > 0 ? numEP + totalReturnedEP : numEP),
+      totalReturnedWeight,
+      totalReturnedBags,
+      returns,
       rateType,
       rateUnit,
       rate: rateType === 'storage' ? 0 : numRate,
@@ -572,7 +688,14 @@ export default function ArrivalEntryModal({
           {/* Weight, Bags, Outturn & EP Calculations */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
             <div className="form-group">
-              <label className="form-label">Raw Weight (kg) *</label>
+              <label className="form-label">
+                Raw Weight (kg) *
+                {returns.length > 0 && (
+                  <span style={{ fontSize: '0.72rem', color: '#e11d48', marginLeft: '6px', fontWeight: 600 }}>
+                    (Net Active: {numWeight.toLocaleString()} kg)
+                  </span>
+                )}
+              </label>
               <input
                 type="number"
                 step="any"
@@ -666,6 +789,211 @@ export default function ArrivalEntryModal({
               <span className="calc-item-label">End Product (EP)</span>
               <span className="calc-item-val highlight">{numEP.toLocaleString()} kg</span>
             </div>
+          </div>
+
+          {/* Returns & Rejections Audit Section */}
+          <div style={{
+            background: returns.length > 0 ? '#fff1f2' : '#f8fafc',
+            border: returns.length > 0 ? '1.5px solid #fecdd3' : '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '0.85rem 1rem',
+            marginBottom: '0.85rem'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: returns.length > 0 || showAddReturn ? '0.75rem' : 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.1rem' }}>↩️</span>
+                <span style={{ fontWeight: 700, fontSize: '0.85rem', color: returns.length > 0 ? '#9f1239' : '#334155' }}>
+                  Returns & Rejections Audit Tracker {returns.length > 0 && `(${returns.length} Logged)`}
+                </span>
+                {returns.length > 0 && (
+                  <span style={{
+                    background: '#e11d48',
+                    color: '#fff',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '12px'
+                  }}>
+                    -{totalReturnedWeight.toLocaleString()} kg Total Returned
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{
+                  background: showAddReturn ? '#e2e8f0' : '#fee2e2',
+                  color: showAddReturn ? '#334155' : '#b91c1c',
+                  border: '1px solid #fca5a5',
+                  fontWeight: 600,
+                  fontSize: '0.75rem',
+                  padding: '0.25rem 0.6rem'
+                }}
+                onClick={() => setShowAddReturn(!showAddReturn)}
+              >
+                {showAddReturn ? 'Cancel Return Entry' : '+ Log Return / Reject'}
+              </button>
+            </div>
+
+            {/* Active vs Original Balance Summary Bar if returns exist */}
+            {returns.length > 0 && (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '0.5rem',
+                background: '#fff',
+                padding: '0.6rem',
+                borderRadius: '6px',
+                border: '1px solid #ffe4e6',
+                marginBottom: '0.75rem',
+                textAlign: 'center'
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Original Inward</div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>
+                    {(Number(originalWeight) || (numWeight + totalReturnedWeight)).toLocaleString()} kg
+                  </div>
+                </div>
+                <div style={{ borderLeft: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>
+                  <div style={{ fontSize: '0.7rem', color: '#e11d48', fontWeight: 600, textTransform: 'uppercase' }}>Total Returned</div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#e11d48' }}>
+                    - {totalReturnedWeight.toLocaleString()} kg ({totalReturnedBags} b)
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 600, textTransform: 'uppercase' }}>Net Active Balance</div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#059669' }}>
+                    = {numWeight.toLocaleString()} kg ({numBags} b)
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Existing Returns Table */}
+            {returns.length > 0 && (
+              <div style={{ overflowX: 'auto', marginBottom: showAddReturn ? '0.75rem' : 0 }}>
+                <table style={{ width: '100%', fontSize: '0.78rem', background: '#fff', borderRadius: '4px', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#fff1f2', borderBottom: '1px solid #fecdd3', color: '#881337', textAlign: 'left' }}>
+                      <th style={{ padding: '6px 8px' }}>Date</th>
+                      <th style={{ padding: '6px 8px' }}>Vehicle No</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Returned (kg)</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Bags</th>
+                      <th style={{ padding: '6px 8px' }}>Reason / Remarks</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'center' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {returns.map((ret, idx) => (
+                      <tr key={ret.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '6px 8px' }}>{ret.date}</td>
+                        <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)' }}>{ret.vehicleNo || '-'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#e11d48' }}>
+                          {Number(ret.weight).toLocaleString()} kg
+                        </td>
+                        <td style={{ padding: '6px 8px', textAlign: 'right' }}>{ret.bags || 0}</td>
+                        <td style={{ padding: '6px 8px', color: '#475569' }}>{ret.reason || '-'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.85rem' }}
+                            onClick={() => handleRemoveReturn(ret.id)}
+                            title="Remove this return entry"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* New Return Form Input Row */}
+            {showAddReturn && (
+              <div style={{
+                background: '#fff',
+                border: '1px dashed #f43f5e',
+                borderRadius: '6px',
+                padding: '0.75rem',
+                marginTop: '0.5rem'
+              }}>
+                <div style={{ fontWeight: 700, fontSize: '0.78rem', color: '#9f1239', marginBottom: '0.4rem' }}>
+                  Record New Return / Rejected Inward Quantity
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr 1fr 0.8fr 1.6fr auto', gap: '0.5rem', alignItems: 'end' }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Return Date</label>
+                    <input
+                      type="date"
+                      className="form-control form-control-sm"
+                      value={newReturnDate}
+                      onChange={e => setNewReturnDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Return Vehicle</label>
+                    <input
+                      type="text"
+                      className="form-control form-control-sm"
+                      placeholder="e.g. KA-12-3456"
+                      value={newReturnVehicle}
+                      onChange={e => setNewReturnVehicle(e.target.value.toUpperCase())}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Return Wt (kg) *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-control form-control-sm num-input"
+                      placeholder="e.g. 2000"
+                      value={newReturnWeight}
+                      onChange={e => {
+                        setNewReturnWeight(e.target.value);
+                        const nw = parseFloat(e.target.value);
+                        if (!isNaN(nw) && nw > 0) {
+                          setNewReturnBags(String(Math.round((nw / 50) * 100) / 100));
+                        }
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Bags</label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-control form-control-sm num-input"
+                      placeholder="Auto"
+                      value={newReturnBags}
+                      onChange={e => setNewReturnBags(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Reason / Notes</label>
+                    <input
+                      type="text"
+                      className="form-control form-control-sm"
+                      placeholder="e.g. Quality rejected back to supplier"
+                      value={newReturnReason}
+                      onChange={e => setNewReturnReason(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      style={{ padding: '0.35rem 0.75rem', fontWeight: 600, fontSize: '0.75rem' }}
+                      onClick={handleAddReturn}
+                    >
+                      Apply Return
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Rate, GST & Settlement Options */}

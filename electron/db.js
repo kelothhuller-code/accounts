@@ -2500,6 +2500,13 @@ const dbController = {
     }
     endProductWeight = Math.round(endProductWeight * 100) / 100;
 
+    const returns = Array.isArray(data.returns) ? data.returns : [];
+    const totalReturnedWeight = returns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const totalReturnedBags = returns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const originalWeight = data.originalWeight !== undefined ? Number(data.originalWeight) : (returns.length > 0 ? Math.round((weight + totalReturnedWeight) * 100) / 100 : weight);
+    const originalBags = data.originalBags !== undefined ? Number(data.originalBags) : (returns.length > 0 ? Math.round((bags + totalReturnedBags) * 100) / 100 : bags);
+    const originalEndProductWeight = data.originalEndProductWeight !== undefined ? Number(data.originalEndProductWeight) : (returns.length > 0 ? Math.round((endProductWeight + totalReturnedWeight) * 100) / 100 : endProductWeight);
+
     const rateType = data.rateType || 'fixed';
     const billType = data.billType || 'gst_bill';
     let rate = Number(data.rate) || 0;
@@ -2617,6 +2624,12 @@ const dbController = {
       remainingEndProduct: status === 'storage' ? endProductWeight : 0,
       settlementIds: [],
       commitmentId,
+      originalWeight,
+      originalBags,
+      originalEndProductWeight,
+      totalReturnedWeight,
+      totalReturnedBags,
+      returns,
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
       remarks: data.remarks || '',
@@ -2669,6 +2682,13 @@ const dbController = {
       }
     }
     endProductWeight = Math.round(endProductWeight * 100) / 100;
+
+    const returns = Array.isArray(data.returns) ? data.returns : (arr.returns || []);
+    const totalReturnedWeight = returns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const totalReturnedBags = returns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const originalWeight = data.originalWeight !== undefined ? Number(data.originalWeight) : (arr.originalWeight || (returns.length > 0 ? Math.round((weight + totalReturnedWeight) * 100) / 100 : weight));
+    const originalBags = data.originalBags !== undefined ? Number(data.originalBags) : (arr.originalBags || (returns.length > 0 ? Math.round((bags + totalReturnedBags) * 100) / 100 : bags));
+    const originalEndProductWeight = data.originalEndProductWeight !== undefined ? Number(data.originalEndProductWeight) : (arr.originalEndProductWeight || (returns.length > 0 ? Math.round((endProductWeight + totalReturnedWeight) * 100) / 100 : endProductWeight));
 
     const rate = data.rate !== undefined ? Number(data.rate) : arr.rate;
     const billType = data.billType || arr.billType || 'gst_bill';
@@ -2803,6 +2823,12 @@ const dbController = {
       submittedNetAmountIgnored,
       remainingBags: newStatus === 'storage' ? Math.max(0, bags - (arr.settledBags || 0)) : (arr.remainingBags !== undefined ? arr.remainingBags : 0),
       remainingEndProduct: newStatus === 'storage' ? Math.max(0, endProductWeight - (arr.settledEndProduct || 0)) : (arr.remainingEndProduct !== undefined ? arr.remainingEndProduct : 0),
+      originalWeight,
+      originalBags,
+      originalEndProductWeight,
+      totalReturnedWeight,
+      totalReturnedBags,
+      returns,
       remarks: data.remarks !== undefined ? data.remarks : arr.remarks,
       updatedAt: Date.now()
     };
@@ -2895,6 +2921,13 @@ const dbController = {
     const rateUnit = data.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
 
     let endProductWeight = data.endProductWeight !== undefined && data.endProductWeight !== '' ? Number(data.endProductWeight) : (calculationBasis === 'direct' ? weight : weight);
+
+    const returns = Array.isArray(data.returns) ? data.returns : [];
+    const totalReturnedWeight = returns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const totalReturnedBags = returns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const originalWeight = data.originalWeight !== undefined ? Number(data.originalWeight) : (returns.length > 0 ? Math.round((weight + totalReturnedWeight) * 100) / 100 : weight);
+    const originalBags = data.originalBags !== undefined ? Number(data.originalBags) : (returns.length > 0 ? Math.round((bags + totalReturnedBags) * 100) / 100 : bags);
+    const originalEndProductWeight = data.originalEndProductWeight !== undefined ? Number(data.originalEndProductWeight) : (returns.length > 0 ? Math.round((endProductWeight + totalReturnedWeight) * 100) / 100 : endProductWeight);
 
     const rateType = data.rateType || 'fixed'; // 'fixed', 'commitment', 'storage_out'
     const billType = data.billType || 'gst_bill'; // 'gst_bill' or 'cash_bill'
@@ -3014,6 +3047,12 @@ const dbController = {
       remainingEndProduct: rateType === 'storage_out' ? endProductWeight : 0,
       settlementIds: [],
       commitmentId,
+      originalWeight,
+      originalBags,
+      originalEndProductWeight,
+      totalReturnedWeight,
+      totalReturnedBags,
+      returns,
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
       remarks: data.remarks || '',
@@ -3045,6 +3084,13 @@ const dbController = {
     const outturn = data.outturn !== undefined ? Number(data.outturn) : disp.outturn;
     const outturnType = data.outturnType || disp.outturnType || 'per_50kg';
     const endProductWeight = data.endProductWeight !== undefined && data.endProductWeight !== '' ? Number(data.endProductWeight) : disp.endProductWeight;
+
+    const returns = Array.isArray(data.returns) ? data.returns : (disp.returns || []);
+    const totalReturnedWeight = returns.reduce((s, r) => s + (Number(r.weight) || 0), 0);
+    const totalReturnedBags = returns.reduce((s, r) => s + (Number(r.bags) || 0), 0);
+    const originalWeight = data.originalWeight !== undefined ? Number(data.originalWeight) : (disp.originalWeight || (returns.length > 0 ? Math.round((weight + totalReturnedWeight) * 100) / 100 : weight));
+    const originalBags = data.originalBags !== undefined ? Number(data.originalBags) : (disp.originalBags || (returns.length > 0 ? Math.round((bags + totalReturnedBags) * 100) / 100 : bags));
+    const originalEndProductWeight = data.originalEndProductWeight !== undefined ? Number(data.originalEndProductWeight) : (disp.originalEndProductWeight || (returns.length > 0 ? Math.round((endProductWeight + totalReturnedWeight) * 100) / 100 : endProductWeight));
     const rate = data.rate !== undefined ? Number(data.rate) : disp.rate;
     const billType = data.billType || disp.billType || 'gst_bill';
     const dispatchType = data.dispatchType || disp.dispatchType || 'coffee';
@@ -3195,6 +3241,12 @@ const dbController = {
       applyCuttingToBill: applyCutting || undefined,
       remainingBags: newStatus === 'storage_out' ? Math.max(0, bags - (disp.settledBags || 0)) : (disp.remainingBags !== undefined ? disp.remainingBags : 0),
       remainingEndProduct: newStatus === 'storage_out' ? Math.max(0, endProductWeight - (disp.settledEndProduct || 0)) : (disp.remainingEndProduct !== undefined ? disp.remainingEndProduct : 0),
+      originalWeight,
+      originalBags,
+      originalEndProductWeight,
+      totalReturnedWeight,
+      totalReturnedBags,
+      returns,
       remarks: data.remarks !== undefined ? data.remarks : disp.remarks,
       updatedAt: Date.now()
     };

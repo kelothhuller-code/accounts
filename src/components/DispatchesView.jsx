@@ -719,7 +719,27 @@ export default function DispatchesView({
                         </div>
                       </td>
                       <td>{d.vehicleNo || '-'}</td>
-                      <td className="num">{d.weight ? d.weight.toLocaleString() : 0} kg</td>
+                      <td className="num">
+                        <div>{d.weight ? d.weight.toLocaleString() : 0} kg</div>
+                        {d.totalReturnedWeight > 0 && (
+                          <div
+                            style={{
+                              fontSize: '0.7rem',
+                              color: '#dc2626',
+                              fontWeight: 700,
+                              cursor: 'help',
+                              background: '#fee2e2',
+                              padding: '1px 4px',
+                              borderRadius: '4px',
+                              marginTop: '2px',
+                              display: 'inline-block'
+                            }}
+                            title={`Original Delivered: ${(d.originalWeight || (d.weight + d.totalReturnedWeight)).toLocaleString()} kg\nTotal Returned: ${d.totalReturnedWeight.toLocaleString()} kg (${(d.returns || []).length} return${(d.returns || []).length > 1 ? 's' : ''})\n${(d.returns || []).map(r => `• ${r.date} | ${r.vehicleNo || 'No Veh'} | ${r.weight}kg (${r.bags || 0}b) | ${r.reason || 'Return'}`).join('\n')}`}
+                          >
+                            ↩️ {d.totalReturnedWeight.toLocaleString()} kg ret.
+                          </div>
+                        )}
+                      </td>
                       <td className="num" style={{ fontWeight: 600 }}>
                         {d.bags || 0}
                       </td>

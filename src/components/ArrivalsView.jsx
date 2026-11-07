@@ -480,7 +480,27 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
                           </span>
                         </div>
                       </td>
-                      <td className="num">{(Number(a.weight) || 0).toLocaleString()}</td>
+                      <td className="num">
+                        <div>{(Number(a.weight) || 0).toLocaleString()} kg</div>
+                        {a.totalReturnedWeight > 0 && (
+                          <div
+                            style={{
+                              fontSize: '0.7rem',
+                              color: '#dc2626',
+                              fontWeight: 700,
+                              cursor: 'help',
+                              background: '#fee2e2',
+                              padding: '1px 4px',
+                              borderRadius: '4px',
+                              marginTop: '2px',
+                              display: 'inline-block'
+                            }}
+                            title={`Original Inward: ${(a.originalWeight || ((Number(a.weight) || 0) + a.totalReturnedWeight)).toLocaleString()} kg\nTotal Returned: ${a.totalReturnedWeight.toLocaleString()} kg (${(a.returns || []).length} return${(a.returns || []).length > 1 ? 's' : ''})\n${(a.returns || []).map(r => `• ${r.date} | ${r.vehicleNo || 'No Veh'} | ${r.weight}kg (${r.bags || 0}b) | ${r.reason || 'Return'}`).join('\n')}`}
+                          >
+                            ↩️ {a.totalReturnedWeight.toLocaleString()} kg ret.
+                          </div>
+                        )}
+                      </td>
                       <td className="num" style={{ fontWeight: 600 }}>{a.bags}</td>
                       <td className="num">
                         <span style={{ fontSize: '0.8rem', color: '#475569' }}>

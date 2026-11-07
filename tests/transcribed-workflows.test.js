@@ -393,3 +393,149 @@ test('editing store out dispatch and store in arrival allows adjusting both weig
   assert.equal(updatedArr.remainingEndProduct, 2340);
   assert.equal(updatedArr.remarks, '500 kg returned to supplier');
 });
+
+test('returns and rejections tracker maintains net active balance and complete return audit history', () => {
+  const { db } = isolate();
+
+  const party = db.addSupplier({
+    name: 'Estate Planters Ltd',
+    phone: '9876543210',
+    place: 'Coorg'
+  });
+
+  // 1. Initial Store Out Dispatch of 10,000 kg (200 bags)
+  const disp = db.addDispatch({
+    supplierId: party.id,
+    supplierName: party.name,
+    date: '2026-11-05',
+    vehicleNo: 'KA-12-AA-1111',
+    product: 'Parchment EP',
+    calculationBasis: 'direct',
+    weight: 10000,
+    bags: 200,
+    endProductWeight: 10000,
+    rateType: 'storage_out',
+    rate: 0
+  }, false);
+
+  assert.equal(disp.weight, 10000);
+  assert.equal(disp.originalWeight, 10000);
+  assert.equal(disp.totalReturnedWeight, 0);
+  assert.deepEqual(disp.returns, []);
+
+  // 2. User edits dispatch to record 2,000 kg return on vehicle KA-04-B-9999
+  const updatedDisp = db.updateDispatch(disp.id, {
+    weight: 8000,
+    bags: 160,
+    endProductWeight: 8000,
+    originalWeight: 10000,
+    originalBags: 200,
+    originalEndProductWeight: 10000,
+    returns: [
+      {
+        id: 'ret_1',
+        date: '2026-11-07',
+        vehicleNo: 'KA-04-B-9999',
+        weight: 2000,
+        bags: 40,
+        endProductWeight: 2000,
+        reason: 'Moisture above threshold rejected by buyer'
+      }
+    ]
+  });
+
+  // Active weight is 8,000 kg (net balance)
+  assert.equal(updatedDisp.weight, 8000);
+  assert.equal(updatedDisp.bags, 160);
+  assert.equal(updatedDisp.endProductWeight, 8000);
+  assert.equal(updatedDisp.remainingEndProduct, 8000);
+
+  // Original delivered is preserved
+  assert.equal(updatedDisp.originalWeight, 10000);
+  assert.equal(updatedDisp.originalBags, 200);
+
+  // Return totals and audit items are tracked
+  assert.equal(updatedDisp.totalReturnedWeight, 2000);
+  assert.equal(updatedDisp.totalReturnedBags, 40);
+  assert.equal(updatedDisp.returns.length, 1);
+  assert.equal(updatedDisp.returns[0].vehicleNo, 'KA-04-B-9999');
+  assert.equal(updatedDisp.returns[0].weight, 2000);
+  assert.equal(updatedDisp.returns[0].reason, 'Moisture above threshold rejected by buyer');
+
+  // 3. User records a second partial return of 500 kg
+  const updatedDisp2 = db.updateDispatch(disp.id, {
+    weight: 7500,
+    bags: 150,
+    endProductWeight: 7500,
+    originalWeight: 10000,
+    originalBags: 200,
+    originalEndProductWeight: 10000,
+    returns: [
+      {
+        id: 'ret_1',
+        date: '2026-11-07',
+        vehicleNo: 'KA-04-B-9999',
+        weight: 2000,
+        bags: 40,
+        endProductWeight: 2000,
+        reason: 'Moisture above threshold rejected by buyer'
+      },
+      {
+        id: 'ret_2',
+        date: '2026-11-08',
+        vehicleNo: 'KA-12-C-2222',
+        weight: 500,
+        bags: 10,
+        endProductWeight: 500,
+        reason: 'Torn bags on transport'
+      }
+    ]
+  });
+
+  assert.equal(updatedDisp2.weight, 7500);
+  assert.equal(updatedDisp2.totalReturnedWeight, 2500);
+  assert.equal(updatedDisp2.totalReturnedBags, 50);
+  assert.equal(updatedDisp2.originalWeight, 10000);
+  assert.equal(updatedDisp2.returns.length, 2);
+
+  // 4. Same audit behavior for inward store in arrival
+  const arr = db.addArrival({
+    supplierId: party.id,
+    supplierName: party.name,
+    date: '2026-11-05',
+    product: 'Cherry Arabica',
+    calculationBasis: 'direct',
+    weight: 6000,
+    bags: 120,
+    endProductWeight: 6000,
+    rateType: 'storage',
+    rate: 0
+  }, false);
+
+  const updatedArr = db.updateArrival(arr.id, {
+    weight: 5700,
+    bags: 114,
+    endProductWeight: 5700,
+    originalWeight: 6000,
+    originalBags: 120,
+    returns: [
+      {
+        id: 'ret_arr_1',
+        date: '2026-11-07',
+        vehicleNo: 'KA-19-M-5555',
+        weight: 300,
+        bags: 6,
+        endProductWeight: 300,
+        reason: 'Inferior berry sorting sent back to planter'
+      }
+    ]
+  });
+
+  assert.equal(updatedArr.weight, 5700);
+  assert.equal(updatedArr.bags, 114);
+  assert.equal(updatedArr.originalWeight, 6000);
+  assert.equal(updatedArr.totalReturnedWeight, 300);
+  assert.equal(updatedArr.totalReturnedBags, 6);
+  assert.equal(updatedArr.returns.length, 1);
+  assert.equal(updatedArr.returns[0].vehicleNo, 'KA-19-M-5555');
+});
