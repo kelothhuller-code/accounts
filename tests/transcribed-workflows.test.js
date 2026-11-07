@@ -321,3 +321,75 @@ test('updateArrival transitions storage arrival to commitment bill', () => {
   assert.equal(comAfter.fulfilledQty, 15000);
   assert.equal(comAfter.remainingQty, 5000);
 });
+
+test('editing store out dispatch and store in arrival allows adjusting both weight and EP for returns', () => {
+  const { db, state } = isolate();
+  const partyObj = party(db, 'ABC Coffee');
+
+  // 1. Create a store out dispatch of 6,000 kg (6,000 EP)
+  const disp = db.addDispatch({
+    supplierId: partyObj.id,
+    supplierName: partyObj.name,
+    date: '2026-11-01',
+    product: 'RC EP',
+    calculationBasis: 'direct',
+    weight: 6000,
+    bags: 120,
+    endProductWeight: 6000,
+    rateType: 'storage_out',
+    rate: 0
+  }, false);
+
+  assert.equal(disp.status, 'storage_out');
+  assert.equal(disp.weight, 6000);
+  assert.equal(disp.endProductWeight, 6000);
+  assert.equal(disp.remainingEndProduct, 6000);
+
+  // 2. 300 kg returned: edit store out by deducting returned qty (6000 - 300 = 5700) with a note
+  const updatedDisp = db.updateDispatch(disp.id, {
+    weight: 5700,
+    bags: 114,
+    endProductWeight: 5700,
+    remarks: '300 kg returned from customer, balance 5700 kg'
+  });
+
+  assert.equal(updatedDisp.weight, 5700);
+  assert.equal(updatedDisp.bags, 114);
+  assert.equal(updatedDisp.endProductWeight, 5700);
+  assert.equal(updatedDisp.remainingEndProduct, 5700);
+  assert.equal(updatedDisp.remarks, '300 kg returned from customer, balance 5700 kg');
+
+  // 3. Similarly for store in arrival: 5,000 kg raw arrival (2,600 EP) edited when 500 kg returned
+  const arr = db.addArrival({
+    supplierId: partyObj.id,
+    supplierName: partyObj.name,
+    date: '2026-11-01',
+    product: 'RC raw',
+    calculationBasis: 'end_product',
+    weight: 5000,
+    bags: 100,
+    outturn: 26,
+    endProductWeight: 2600,
+    rateType: 'storage',
+    rate: 0
+  }, false);
+
+  assert.equal(arr.status, 'storage');
+  assert.equal(arr.weight, 5000);
+  assert.equal(arr.endProductWeight, 2600);
+  assert.equal(arr.remainingEndProduct, 2600);
+
+  // Edit arrival: net weight 4500, EP 2340
+  const updatedArr = db.updateArrival(arr.id, {
+    weight: 4500,
+    bags: 90,
+    endProductWeight: 2340,
+    remarks: '500 kg returned to supplier'
+  });
+
+  assert.equal(updatedArr.weight, 4500);
+  assert.equal(updatedArr.bags, 90);
+  assert.equal(updatedArr.endProductWeight, 2340);
+  assert.equal(updatedArr.remainingEndProduct, 2340);
+  assert.equal(updatedArr.remarks, '500 kg returned to supplier');
+});

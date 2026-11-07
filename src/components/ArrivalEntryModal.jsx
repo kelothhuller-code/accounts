@@ -37,6 +37,7 @@ export default function ArrivalEntryModal({
   const [bags, setBags] = useState('');
   const [outturn, setOutturn] = useState('26');
   const [outturnType, setOutturnType] = useState('per_50kg'); // 'per_50kg' or 'percentage'
+  const [endProductWeight, setEndProductWeight] = useState('');
 
   // Pricing & Accounting State
   const [rateType, setRateType] = useState('fixed'); // 'fixed', 'commitment', 'storage'
@@ -69,6 +70,7 @@ export default function ArrivalEntryModal({
     setBags(String(arr.bags || ''));
     setOutturn(String(arr.outturn || '26'));
     setOutturnType(arr.outturnType || 'per_50kg');
+    setEndProductWeight(arr.endProductWeight !== undefined && arr.endProductWeight !== null ? String(arr.endProductWeight) : (arr.weight ? String(arr.weight) : ''));
     setRateType(arr.rateType || 'fixed');
     setRateUnit(arr.rateUnit || 'per_kg_ep');
     setRate(String(arr.rate || ''));
@@ -143,12 +145,38 @@ export default function ArrivalEntryModal({
   const handleWeightChange = (e) => {
     const val = e.target.value;
     setWeight(val);
-    const numWeight = parseFloat(val);
-    if (!isNaN(numWeight) && numWeight > 0) {
-      const autoBags = Math.round((numWeight / 50) * 100) / 100;
+    const numW = parseFloat(val);
+    if (!isNaN(numW) && numW > 0) {
+      const autoBags = Math.round((numW / 50) * 100) / 100;
       setBags(String(autoBags));
+      if (isDirectBasis) {
+        setEndProductWeight(val);
+      } else {
+        const numOT = parseFloat(outturn) || 26;
+        const ep = outturnType === 'percentage' ? (numW * (numOT / 100)) : ((numW / 50) * numOT);
+        setEndProductWeight(String(Math.round(ep * 100) / 100));
+      }
     } else {
       setBags('');
+      setEndProductWeight('');
+    }
+  };
+
+  const handleOutturnChange = (val) => {
+    setOutturn(val);
+    const numOT = parseFloat(val);
+    if (!isNaN(numOT) && numOT > 0 && numWeight > 0 && !isDirectBasis) {
+      const ep = outturnType === 'percentage' ? (numWeight * (numOT / 100)) : ((numWeight / 50) * numOT);
+      setEndProductWeight(String(Math.round(ep * 100) / 100));
+    }
+  };
+
+  const handleEpChange = (val) => {
+    setEndProductWeight(val);
+    const numE = parseFloat(val);
+    if (!isNaN(numE) && numE > 0 && numWeight > 0 && !isDirectBasis) {
+      const calcOT = outturnType === 'percentage' ? ((numE / numWeight) * 100).toFixed(2) : ((numE / (numWeight / 50))).toFixed(2);
+      setOutturn(String(calcOT));
     }
   };
 
@@ -174,18 +202,20 @@ export default function ArrivalEntryModal({
   const numTds = parseFloat(tdsRate) || 0;
 
   // End Product calculation
-  let endProductWeight = 0;
+  let calculatedEP = 0;
   if (isDirectBasis) {
-    endProductWeight = numWeight;
+    calculatedEP = numWeight;
   } else if (numWeight > 0 && numOutturn > 0) {
     if (outturnType === 'percentage') {
-      endProductWeight = numWeight * (numOutturn / 100);
+      calculatedEP = numWeight * (numOutturn / 100);
     } else {
-      endProductWeight = (numWeight / 50) * numOutturn;
+      calculatedEP = (numWeight / 50) * numOutturn;
     }
   }
-  endProductWeight = Math.round(endProductWeight * 100) / 100;
-  const outturnPercentage = numWeight > 0 ? ((endProductWeight / numWeight) * 100).toFixed(2) : (isDirectBasis ? 100 : 0);
+  calculatedEP = Math.round(calculatedEP * 100) / 100;
+
+  const numEP = (endProductWeight !== '' && !isNaN(parseFloat(endProductWeight))) ? parseFloat(endProductWeight) : calculatedEP;
+  const outturnPercentage = numWeight > 0 ? ((numEP / numWeight) * 100).toFixed(2) : (isDirectBasis ? 100 : 0);
 
   // Billing
   let taxableAmount = 0;
@@ -195,7 +225,7 @@ export default function ArrivalEntryModal({
     } else if (isDirectBasis || rateUnit === 'per_kg_raw') {
       taxableAmount = Math.round((numWeight * numRate) * 100) / 100;
     } else {
-      taxableAmount = Math.round((endProductWeight * numRate) * 100) / 100;
+      taxableAmount = Math.round((numEP * numRate) * 100) / 100;
     }
   }
 
@@ -274,7 +304,7 @@ export default function ArrivalEntryModal({
       bags: numBags,
       outturn: isDirectBasis ? 50 : numOutturn,
       outturnType,
-      endProductWeight,
+      endProductWeight: numEP,
       rateType,
       rateUnit,
       rate: rateType === 'storage' ? 0 : numRate,
@@ -308,6 +338,7 @@ export default function ArrivalEntryModal({
         if (saveAndAddAnother) {
           setWeight('');
           setBags('');
+          setEndProductWeight('');
           setRate('');
           setVehicleNo('');
           setRemarks('');
@@ -539,7 +570,7 @@ export default function ArrivalEntryModal({
           </div>
 
           {/* Weight, Bags, Outturn Calculations */}
-          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1.2fr' }}>
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1.2fr' }}>
             <div className="form-group">
               <label className="form-label">Raw Weight (kg) *</label>
               <input
@@ -595,8 +626,22 @@ export default function ArrivalEntryModal({
                 className="form-control num-input"
                 placeholder={isDirectBasis ? '50 (Direct 100%)' : (outturnType === 'per_50kg' ? 'e.g. 26' : 'e.g. 52 (%)')}
                 value={isDirectBasis ? '50' : outturn}
-                onChange={e => setOutturn(e.target.value)}
+                onChange={e => handleOutturnChange(e.target.value)}
                 disabled={isDirectBasis}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Clean EP Weight (kg) *</label>
+              <input
+                type="number"
+                step="any"
+                className="form-control num-input"
+                style={{ fontWeight: 700, color: '#d97706' }}
+                placeholder="e.g. 2600"
+                value={endProductWeight}
+                onChange={e => handleEpChange(e.target.value)}
+                required
               />
             </div>
           </div>
@@ -617,7 +662,7 @@ export default function ArrivalEntryModal({
             </div>
             <div className="calc-item" style={{ borderLeft: '2px solid #d97706', paddingLeft: '0.75rem' }}>
               <span className="calc-item-label">End Product (EP)</span>
-              <span className="calc-item-val highlight">{endProductWeight.toLocaleString()} kg</span>
+              <span className="calc-item-val highlight">{numEP.toLocaleString()} kg</span>
             </div>
           </div>
 

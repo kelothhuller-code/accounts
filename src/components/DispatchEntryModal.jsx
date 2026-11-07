@@ -140,7 +140,7 @@ export default function DispatchEntryModal({
     }
   }, [supplierId]);
 
-  // Weight / Bags auto-calculation
+  // Weight / Bags / EP auto-calculation
   const handleWeightChange = (e) => {
     const val = e.target.value;
     setWeight(val);
@@ -148,8 +148,34 @@ export default function DispatchEntryModal({
     if (!isNaN(numW) && numW > 0) {
       const autoBags = Math.round((numW / 50) * 100) / 100;
       setBags(String(autoBags));
+      if (isDirectBasis) {
+        setEndProductWeight(val);
+      } else {
+        const numOT = parseFloat(outturn) || 26;
+        const ep = outturnType === 'percentage' ? (numW * (numOT / 100)) : ((numW / 50) * numOT);
+        setEndProductWeight(String(Math.round(ep * 100) / 100));
+      }
     } else {
       setBags('');
+      setEndProductWeight('');
+    }
+  };
+
+  const handleOutturnChange = (val) => {
+    setOutturn(val);
+    const numOT = parseFloat(val);
+    if (!isNaN(numOT) && numOT > 0 && numWeight > 0 && !isDirectBasis) {
+      const ep = outturnType === 'percentage' ? (numWeight * (numOT / 100)) : ((numWeight / 50) * numOT);
+      setEndProductWeight(String(Math.round(ep * 100) / 100));
+    }
+  };
+
+  const handleEpChange = (val) => {
+    setEndProductWeight(val);
+    const numE = parseFloat(val);
+    if (!isNaN(numE) && numE > 0 && numWeight > 0 && !isDirectBasis) {
+      const calcOT = outturnType === 'percentage' ? ((numE / numWeight) * 100).toFixed(2) : ((numE / (numWeight / 50))).toFixed(2);
+      setOutturn(String(calcOT));
     }
   };
 
@@ -223,7 +249,7 @@ export default function DispatchEntryModal({
   }
   calculatedEP = Math.round(calculatedEP * 100) / 100;
 
-  const numEP = parseFloat(endProductWeight) || calculatedEP;
+  const numEP = (endProductWeight !== '' && !isNaN(parseFloat(endProductWeight))) ? parseFloat(endProductWeight) : calculatedEP;
   const outturnPercentage = numWeight > 0 ? ((numEP / numWeight) * 100).toFixed(2) : (isDirectBasis ? 100 : 0);
 
   let calcTaxable = 0;
@@ -526,7 +552,7 @@ export default function DispatchEntryModal({
           </div>
 
           {/* Weight, Bags, Outturn Calculations */}
-          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1.2fr' }}>
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1.2fr' }}>
             <div className="form-group">
               <label className="form-label">Gross Weight (kg) *</label>
               <input
@@ -582,8 +608,22 @@ export default function DispatchEntryModal({
                 className="form-control num-input"
                 placeholder={isDirectBasis ? '50 (Direct 100%)' : (outturnType === 'per_50kg' ? 'e.g. 26' : 'e.g. 52 (%)')}
                 value={isDirectBasis ? '50' : outturn}
-                onChange={e => setOutturn(e.target.value)}
+                onChange={e => handleOutturnChange(e.target.value)}
                 disabled={isDirectBasis}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Clean EP Weight (kg) *</label>
+              <input
+                type="number"
+                step="any"
+                className="form-control num-input"
+                style={{ fontWeight: 700, color: '#2563eb' }}
+                placeholder="e.g. 5000"
+                value={endProductWeight}
+                onChange={e => handleEpChange(e.target.value)}
+                required
               />
             </div>
           </div>

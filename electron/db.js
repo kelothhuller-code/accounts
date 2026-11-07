@@ -2486,14 +2486,16 @@ const dbController = {
     const calculationBasis = data.calculationBasis || (prodObj ? prodObj.calculationBasis : (outturn > 0 ? 'end_product' : 'direct'));
     const rateUnit = data.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
 
-    let endProductWeight = 0;
-    if (calculationBasis === 'direct') {
-      endProductWeight = weight;
-    } else {
-      if (outturnType === 'percentage') {
-        endProductWeight = weight * (outturn / 100);
+    let endProductWeight = data.endProductWeight !== undefined && data.endProductWeight !== '' ? Number(data.endProductWeight) : undefined;
+    if (endProductWeight === undefined || !Number.isFinite(endProductWeight)) {
+      if (calculationBasis === 'direct') {
+        endProductWeight = weight;
       } else {
-        endProductWeight = (weight / 50) * outturn;
+        if (outturnType === 'percentage') {
+          endProductWeight = weight * (outturn / 100);
+        } else {
+          endProductWeight = (weight / 50) * outturn;
+        }
       }
     }
     endProductWeight = Math.round(endProductWeight * 100) / 100;
@@ -2654,14 +2656,16 @@ const dbController = {
     const calculationBasis = data.calculationBasis || arr.calculationBasis || (prodObj ? prodObj.calculationBasis : (outturn > 0 ? 'end_product' : 'direct'));
     const rateUnit = data.rateUnit || arr.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
 
-    let endProductWeight = 0;
-    if (calculationBasis === 'direct') {
-      endProductWeight = weight;
-    } else {
-      if (outturnType === 'percentage') {
-        endProductWeight = weight * (outturn / 100);
+    let endProductWeight = data.endProductWeight !== undefined && data.endProductWeight !== '' ? Number(data.endProductWeight) : undefined;
+    if (endProductWeight === undefined || !Number.isFinite(endProductWeight)) {
+      if (calculationBasis === 'direct') {
+        endProductWeight = weight;
       } else {
-        endProductWeight = (weight / 50) * outturn;
+        if (outturnType === 'percentage') {
+          endProductWeight = weight * (outturn / 100);
+        } else {
+          endProductWeight = (weight / 50) * outturn;
+        }
       }
     }
     endProductWeight = Math.round(endProductWeight * 100) / 100;
@@ -2884,11 +2888,13 @@ const dbController = {
 
     const weight = Number(data.weight) || 0;
     const bags = Number(data.bags) || (weight > 0 ? Math.round((weight / 50) * 100) / 100 : 0);
+    const outturn = data.outturn !== undefined ? Number(data.outturn) : undefined;
+    const outturnType = data.outturnType || 'per_50kg';
     const prodObj = dbState.products.find(p => p.name === data.product || p.code === data.product);
     const calculationBasis = data.calculationBasis || (prodObj ? prodObj.calculationBasis : (dispatchType === 'husk' ? 'direct' : 'direct'));
     const rateUnit = data.rateUnit || (calculationBasis === 'end_product' ? 'per_kg_ep' : 'per_kg_raw');
 
-    let endProductWeight = Number(data.endProductWeight) || (calculationBasis === 'direct' ? weight : weight);
+    let endProductWeight = data.endProductWeight !== undefined && data.endProductWeight !== '' ? Number(data.endProductWeight) : (calculationBasis === 'direct' ? weight : weight);
 
     const rateType = data.rateType || 'fixed'; // 'fixed', 'commitment', 'storage_out'
     const billType = data.billType || 'gst_bill'; // 'gst_bill' or 'cash_bill'
@@ -2977,6 +2983,8 @@ const dbController = {
       rateUnit,
       weight,
       bags,
+      outturn,
+      outturnType,
       endProductWeight,
       rateType,
       rate,
@@ -3034,7 +3042,9 @@ const dbController = {
 
     const weight = data.weight !== undefined ? Number(data.weight) : disp.weight;
     const bags = data.bags !== undefined ? Number(data.bags) : disp.bags;
-    const endProductWeight = data.endProductWeight !== undefined ? Number(data.endProductWeight) : disp.endProductWeight;
+    const outturn = data.outturn !== undefined ? Number(data.outturn) : disp.outturn;
+    const outturnType = data.outturnType || disp.outturnType || 'per_50kg';
+    const endProductWeight = data.endProductWeight !== undefined && data.endProductWeight !== '' ? Number(data.endProductWeight) : disp.endProductWeight;
     const rate = data.rate !== undefined ? Number(data.rate) : disp.rate;
     const billType = data.billType || disp.billType || 'gst_bill';
     const dispatchType = data.dispatchType || disp.dispatchType || 'coffee';
@@ -3160,6 +3170,8 @@ const dbController = {
       commitmentId: newCommitmentId,
       weight,
       bags,
+      outturn,
+      outturnType,
       endProductWeight,
       rate,
       billType,
