@@ -493,16 +493,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
     if (currNet > 0) {
       setAdjType('debit');
       setAdjAmount(String(currNet));
-      setAdjReason('Set balance difference to zero (Write-off payable)');
     } else if (currNet < 0) {
       setAdjType('credit');
       setAdjAmount(String(Math.abs(currNet)));
-      setAdjReason('Set balance difference to zero (Write-off receivable)');
     } else {
       setAdjType('debit');
       setAdjAmount('0');
-      setAdjReason('Round-off balance');
     }
+    setAdjReason('');
     setAdjDate(new Date().toISOString().split('T')[0]);
     setAdjNotes('');
     setShowAdjustmentModal(true);
@@ -512,7 +510,7 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
     setEditingAdjustment(adj);
     setAdjType(adj.type || 'debit');
     setAdjAmount(String(adj.amount || ''));
-    setAdjReason(adj.reason || 'Balance Adjustment');
+    setAdjReason(adj.reason || '');
     setAdjDate(safeDateStr(adj.date, new Date().toISOString().split('T')[0]));
     setAdjNotes(adj.notes || '');
     setShowAdjustmentModal(true);
@@ -520,10 +518,22 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
 
   const handleSaveBalanceAdjustment = async (e) => {
     if (e) e.preventDefault();
-    if (!adjAmount || parseFloat(adjAmount) <= 0) {
-      alert('Please enter a valid adjustment amount.');
+    const cleanReason = (adjReason || '').trim();
+    if (!cleanReason || cleanReason.length < 3) {
+      alert('COMPULSORY NOTE REQUIRED:\n\nYou cannot adjust party balance without providing a mandatory explanation.\nPlease enter a clear reason/note (minimum 3 characters) before posting.');
       return;
     }
+    const parsedAmt = parseFloat(adjAmount);
+    if (isNaN(parsedAmt) || parsedAmt <= 0) {
+      alert('Please enter a valid adjustment amount greater than zero.');
+      return;
+    }
+
+    const confirmMsg = `⚠️ CONFIRM BALANCE ADJUSTMENT:\n\nParty: ${data?.summary?.name || 'Party'}\nAmount: ₹${parsedAmt.toLocaleString()} (${adjType.toUpperCase() === 'DEBIT' ? 'DEBIT (Clears Payable / We Owe Less)' : 'CREDIT (Clears Receivable / Owes Us Less)'})\nCompulsory Reason: "${cleanReason}"\n\nThis adjustment will permanently update the financial ledger. Are you sure you want to proceed?`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
     setSavingAdjustment(true);
     try {
       const payload = {
@@ -531,8 +541,8 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
         supplierName: data.summary.name,
         adjustmentNo: editingAdjustment ? editingAdjustment.adjustmentNo : undefined,
         type: adjType,
-        amount: parseFloat(adjAmount),
-        reason: adjReason.trim() || 'Balance Adjustment to Zero',
+        amount: parsedAmt,
+        reason: cleanReason,
         date: adjDate,
         notes: adjNotes
       };
@@ -2953,15 +2963,14 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                       if (s.netPayable > 0) {
                         setAdjType('debit');
                         setAdjAmount(String(Math.abs(s.netPayable)));
-                        setAdjReason('Set balance difference to zero (Write-off payable)');
                       } else {
                         setAdjType('credit');
                         setAdjAmount(String(Math.abs(s.netPayable)));
-                        setAdjReason('Set balance difference to zero (Write-off receivable)');
                       }
+                      setAdjReason('');
                     }}
                   >
-                    ⚡ Auto-Fill: Set Balance Exactly to ₹0.00 (Adjust ₹{Math.abs(s.netPayable).toLocaleString()})
+                    ⚡ Auto-Fill Amount: Adjust ₹{Math.abs(s.netPayable).toLocaleString()} to Zero
                   </button>
                 )}
 
@@ -3015,14 +3024,20 @@ export default function SupplierLedgerModal({ isOpen, onClose, supplierId, onOpe
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Reason / Adjustment Note</label>
+                  <label className="form-label" style={{ fontWeight: 700, color: '#0f172a' }}>
+                    Compulsory Reason / Note <span style={{ color: '#dc2626' }}>*</span>
+                  </label>
                   <input
                     type="text"
                     className="form-control"
-                    placeholder="e.g. Rounding off to zero / Small difference write-off"
+                    placeholder="Mandatory: e.g. Approved round-off of ₹15, Settlement discount agreed..."
                     value={adjReason}
                     onChange={e => setAdjReason(e.target.value)}
+                    required
                   />
+                  <div style={{ fontSize: '0.72rem', color: '#b91c1c', marginTop: '0.2rem', fontWeight: 600 }}>
+                    ⚠️ Required: An explicit note must be entered explaining why this balance is being adjusted.
+                  </div>
                 </div>
 
                 <div className="form-group">

@@ -42,7 +42,7 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onO
     try {
       const res = await dbAction('db:push-to-mongo');
       if (res && res.success) {
-        alert(`☁️ Push Complete!\n\n${res.message}\n• Synced ${res.counts?.suppliers || 0} parties\n• Synced ${res.counts?.arrivals || 0} arrivals\n• Synced ${res.counts?.dispatches || 0} dispatches`);
+        alert(`☁️ Push Complete!\n\n${res.message}\n• Parties: ${res.counts?.suppliers || 0}\n• Arrivals: ${res.counts?.arrivals || 0}\n• Dispatches: ${res.counts?.dispatches || 0}\n• Service/Salary Bills: ${res.counts?.partyBills || 0}\n• Balance Adjustments: ${res.counts?.balanceAdjustments || 0}`);
         if (onDataChanged) onDataChanged();
       } else {
         alert('Push failed: ' + (res?.message || 'Unknown error'));
@@ -69,7 +69,7 @@ export default function Sidebar({ activeTab, setActiveTab, onOpenNewArrival, onO
     try {
       const res = await dbAction('db:pull-from-mongo');
       if (res && res.success) {
-        alert(`📥 Pull Complete!\n\n${res.message}\n• Loaded ${res.counts?.suppliers || 0} parties\n• Loaded ${res.counts?.arrivals || 0} arrivals\n• Loaded ${res.counts?.dispatches || 0} dispatches`);
+        alert(`📥 Pull Complete!\n\n${res.message}\n• Parties: ${res.counts?.suppliers || 0}\n• Arrivals: ${res.counts?.arrivals || 0}\n• Dispatches: ${res.counts?.dispatches || 0}\n• Service/Salary Bills: ${res.counts?.partyBills || 0}\n• Balance Adjustments: ${res.counts?.balanceAdjustments || 0}`);
         if (onDataChanged) onDataChanged();
       } else {
         alert('Pull failed: ' + (res?.message || 'Unknown error'));

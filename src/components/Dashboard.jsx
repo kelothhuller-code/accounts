@@ -1153,6 +1153,16 @@ export default function Dashboard({
             ₹{(global.netPayableGlobal || 0).toLocaleString()}
           </div>
           <div style={{ fontSize: '0.7rem', color: '#475569', marginTop: '0.25rem' }}>
+            {(global.totalPartyBillsValue || 0) > 0 && (
+              <span style={{ color: '#7c3aed', fontWeight: 600 }}>
+                Bills: ₹{(global.totalPartyBillsValue || 0).toLocaleString()} |{' '}
+              </span>
+            )}
+            {(global.totalBalanceAdjustmentsNet || 0) !== 0 && (
+              <span style={{ color: '#0284c7', fontWeight: 600 }}>
+                Adj: {(global.totalBalanceAdjustmentsNet || 0) > 0 ? '+' : ''}₹{(global.totalBalanceAdjustmentsNet || 0).toLocaleString()} |{' '}
+              </span>
+            )}
             {(global.netOpeningFinancialBalance || 0) !== 0 && (
               <span style={{ color: '#b45309', fontWeight: 600 }}>
                 Open: ₹{(global.netOpeningFinancialBalance || 0).toLocaleString()} |{' '}

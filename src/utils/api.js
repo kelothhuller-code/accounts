@@ -983,16 +983,22 @@ function mockBrowserFallback(action, payload) {
     let arrivals = (store.arrivals || []).slice();
     let dispatches = (store.dispatches || []).slice();
     let settlements = (store.settlements || []).slice();
+    let partyBills = (store.partyBills || []).slice();
+    let balanceAdjustments = (store.balanceAdjustments || []).slice();
 
     if (payload?.startDate) {
       arrivals = arrivals.filter(a => a.date >= payload.startDate);
       dispatches = dispatches.filter(d => d.date >= payload.startDate);
       settlements = settlements.filter(s => s.date >= payload.startDate);
+      partyBills = partyBills.filter(b => b.date >= payload.startDate);
+      balanceAdjustments = balanceAdjustments.filter(a => a.date >= payload.startDate);
     }
     if (payload?.endDate) {
       arrivals = arrivals.filter(a => a.date <= payload.endDate);
       dispatches = dispatches.filter(d => d.date <= payload.endDate);
       settlements = settlements.filter(s => s.date <= payload.endDate);
+      partyBills = partyBills.filter(b => b.date <= payload.endDate);
+      balanceAdjustments = balanceAdjustments.filter(a => a.date <= payload.endDate);
     }
 
     let dailyTotalWeight = 0, dailyTotalBags = 0, dailyTotalEndProduct = 0, dailyTotalBill = 0;
@@ -1036,6 +1042,14 @@ function mockBrowserFallback(action, payload) {
       dailySettledEP += (Number(s.settledEndProduct) || 0);
       dailySettledValue += (Number(s.settlementNetAmount) || Number(s.settlementGrossAmount) || 0);
     });
+
+    let dailyPartyBillsValue = 0;
+    let dailyPartyBillsCount = 0;
+    partyBills.forEach(b => {
+      dailyPartyBillsValue += Number(b.netAmount !== undefined ? b.netAmount : b.amount) || 0;
+      dailyPartyBillsCount++;
+    });
+    dailyTotalBill += dailyPartyBillsValue;
 
     let totalPurchasesValue = 0, totalSalesValue = 0, totalTcsAllTime = 0, totalTdsAllTime = 0, totalGstAllTime = 0;
     let totalPaidAllTime = 0, totalReceivedAllTime = 0, totalStorageBags = 0, totalStorageEP = 0, totalStoreOutBags = 0, totalStoreOutEP = 0;
@@ -1150,7 +1164,22 @@ function mockBrowserFallback(action, payload) {
     totalStorageBags += totalOpeningStockBags;
     totalStorageEP += totalOpeningStockEP;
 
-    const netPayableGlobal = netOpeningFinancialBalance + totalPurchasesValue - totalSalesValue - totalPaidAllTime + totalReceivedAllTime;
+    let totalPartyBillsValue = 0;
+    (store.partyBills || []).forEach(b => {
+      totalPartyBillsValue += Number(b.netAmount !== undefined ? b.netAmount : b.amount) || 0;
+    });
+
+    let totalBalanceAdjustmentsNet = 0;
+    (store.balanceAdjustments || []).forEach(a => {
+      const amt = Number(a.amount) || 0;
+      if (a.type === 'debit') {
+        totalBalanceAdjustmentsNet -= amt;
+      } else {
+        totalBalanceAdjustmentsNet += amt;
+      }
+    });
+
+    const netPayableGlobal = netOpeningFinancialBalance + totalPurchasesValue + totalPartyBillsValue - totalSalesValue - totalPaidAllTime + totalReceivedAllTime + totalBalanceAdjustmentsNet;
 
     const storageByProduct = Array.from(productStockMap.values()).map(item => {
       const netBags = Math.round((item.storeInBags - item.storeOutBags) * 100) / 100;
@@ -1168,6 +1197,8 @@ function mockBrowserFallback(action, payload) {
         totalBags: Math.round(dailyTotalBags * 100) / 100,
         totalEndProduct: Math.round(dailyTotalEndProduct * 100) / 100,
         totalBill: Math.round(dailyTotalBill * 100) / 100,
+        partyBillsValue: Math.round(dailyPartyBillsValue * 100) / 100,
+        partyBillsCount: dailyPartyBillsCount,
         storageInBags: Math.round(dailyStorageInBags * 100) / 100,
         storageInEP: Math.round(dailyStorageInEP * 100) / 100,
         dispatchWeight: Math.round(dailyDispatchWeight * 100) / 100,
@@ -1195,7 +1226,9 @@ function mockBrowserFallback(action, payload) {
         totalOpeningStockBags: Math.round(totalOpeningStockBags * 100) / 100,
         totalOpeningStockEP: Math.round(totalOpeningStockEP * 100) / 100,
         totalPurchasesValue: Math.round(totalPurchasesValue * 100) / 100,
+        totalPartyBillsValue: Math.round(totalPartyBillsValue * 100) / 100,
         totalSalesValue: Math.round(totalSalesValue * 100) / 100,
+        totalBalanceAdjustmentsNet: Math.round(totalBalanceAdjustmentsNet * 100) / 100,
         totalStorageBags: Math.round(totalStorageBags * 100) / 100,
         totalStorageEP: Math.round(totalStorageEP * 100) / 100,
         totalStoreOutBags: Math.round(totalStoreOutBags * 100) / 100,

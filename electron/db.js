@@ -926,7 +926,7 @@ function deduplicateSuppliersInDb() {
 async function loadFromMongo() {
   if (!isMongoConnected) return;
   try {
-    const [sups, arrs, disps, comms, sets, pays, trfs, washes, prods, mills, ops, profs] = await Promise.all([
+    const [sups, arrs, disps, comms, sets, pays, trfs, washes, prods, mills, ops, profs, bills, adjs] = await Promise.all([
       MongoSupplier.find({}).lean(),
       MongoArrival.find({}).lean(),
       MongoDispatch.find({}).lean(),
@@ -938,7 +938,9 @@ async function loadFromMongo() {
       MongoProduct.find({}).lean(),
       MongoMillingLog.find({}).lean(),
       MongoOpeningStockEntry.find({}).lean(),
-      MongoProcessingProfile ? MongoProcessingProfile.find({}).lean() : Promise.resolve([])
+      MongoProcessingProfile ? MongoProcessingProfile.find({}).lean() : Promise.resolve([]),
+      MongoPartyBill ? MongoPartyBill.find({}).lean() : Promise.resolve([]),
+      MongoBalanceAdjustment ? MongoBalanceAdjustment.find({}).lean() : Promise.resolve([])
     ]);
 
     dbState.suppliers = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
@@ -947,6 +949,8 @@ async function loadFromMongo() {
     dbState.commitments = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
     dbState.settlements = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
     dbState.payments = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
+    dbState.partyBills = (bills || []).map(b => { delete b._id; delete b.__v; return b; });
+    dbState.balanceAdjustments = (adjs || []).map(a => { delete a._id; delete a.__v; return a; });
     dbState.epTransfers = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
     dbState.commitmentWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
     dbState.products = (prods || []).map(pr => { delete pr._id; delete pr.__v; return pr; });
@@ -994,6 +998,16 @@ async function syncWithMongo() {
     for (const pay of (dbState.payments || [])) {
       await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
     }
+    if (MongoPartyBill) {
+      for (const bill of (dbState.partyBills || [])) {
+        await MongoPartyBill.findOneAndUpdate({ id: bill.id }, bill, { upsert: true });
+      }
+    }
+    if (MongoBalanceAdjustment) {
+      for (const adj of (dbState.balanceAdjustments || [])) {
+        await MongoBalanceAdjustment.findOneAndUpdate({ id: adj.id }, adj, { upsert: true });
+      }
+    }
     for (const trf of (dbState.epTransfers || [])) {
       await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
     }
@@ -1020,7 +1034,7 @@ async function syncWithMongo() {
     }
 
     // 2. Fetch remote collections from Mongo and merge cleanly
-    const [sups, arrs, disps, comms, sets, pays, trfs, washes, prods, mills, ops, profs] = await Promise.all([
+    const [sups, arrs, disps, comms, sets, pays, trfs, washes, prods, mills, ops, profs, bills, adjs] = await Promise.all([
       MongoSupplier.find({}).lean(),
       MongoArrival.find({}).lean(),
       MongoDispatch.find({}).lean(),
@@ -1032,7 +1046,9 @@ async function syncWithMongo() {
       MongoProduct.find({}).lean(),
       MongoMillingLog.find({}).lean(),
       MongoOpeningStockEntry.find({}).lean(),
-      MongoProcessingProfile ? MongoProcessingProfile.find({}).lean() : Promise.resolve([])
+      MongoProcessingProfile ? MongoProcessingProfile.find({}).lean() : Promise.resolve([]),
+      MongoPartyBill ? MongoPartyBill.find({}).lean() : Promise.resolve([]),
+      MongoBalanceAdjustment ? MongoBalanceAdjustment.find({}).lean() : Promise.resolve([])
     ]);
 
     const cleanedSups = (sups || []).map(s => { delete s._id; delete s.__v; return s; });
@@ -1041,6 +1057,8 @@ async function syncWithMongo() {
     const cleanedComms = (comms || []).map(c => { delete c._id; delete c.__v; return c; });
     const cleanedSets = (sets || []).map(st => { delete st._id; delete st.__v; return st; });
     const cleanedPays = (pays || []).map(p => { delete p._id; delete p.__v; return p; });
+    const cleanedBills = (bills || []).map(b => { delete b._id; delete b.__v; return b; });
+    const cleanedAdjs = (adjs || []).map(a => { delete a._id; delete a.__v; return a; });
     const cleanedTrfs = (trfs || []).map(t => { delete t._id; delete t.__v; return t; });
     const cleanedWashes = (washes || []).map(w => { delete w._id; delete w.__v; return w; });
     const cleanedProds = (prods || []).map(pr => { delete pr._id; delete pr.__v; return pr; });
@@ -1053,6 +1071,8 @@ async function syncWithMongo() {
     dbState.commitments = mergeCollections(dbState.commitments, cleanedComms);
     dbState.settlements = mergeCollections(dbState.settlements, cleanedSets);
     dbState.payments = mergeCollections(dbState.payments, cleanedPays);
+    dbState.partyBills = mergeCollections(dbState.partyBills || [], cleanedBills);
+    dbState.balanceAdjustments = mergeCollections(dbState.balanceAdjustments || [], cleanedAdjs);
     dbState.epTransfers = mergeCollections(dbState.epTransfers, cleanedTrfs);
     dbState.commitmentWashes = mergeCollections(dbState.commitmentWashes, cleanedWashes);
     dbState.products = mergeCollections(dbState.products, cleanedProds);
@@ -1576,6 +1596,16 @@ const dbController = {
     for (const pay of (dbState.payments || [])) {
       await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
     }
+    if (MongoPartyBill) {
+      for (const bill of (dbState.partyBills || [])) {
+        await MongoPartyBill.findOneAndUpdate({ id: bill.id }, bill, { upsert: true });
+      }
+    }
+    if (MongoBalanceAdjustment) {
+      for (const adj of (dbState.balanceAdjustments || [])) {
+        await MongoBalanceAdjustment.findOneAndUpdate({ id: adj.id }, adj, { upsert: true });
+      }
+    }
     for (const trf of (dbState.epTransfers || [])) {
       await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
     }
@@ -1611,6 +1641,8 @@ const dbController = {
         commitments: (dbState.commitments || []).length,
         settlements: (dbState.settlements || []).length,
         payments: (dbState.payments || []).length,
+        partyBills: (dbState.partyBills || []).length,
+        balanceAdjustments: (dbState.balanceAdjustments || []).length,
         products: (dbState.products || []).length
       }
     };
@@ -1634,6 +1666,8 @@ const dbController = {
         commitments: (dbState.commitments || []).length,
         settlements: (dbState.settlements || []).length,
         payments: (dbState.payments || []).length,
+        partyBills: (dbState.partyBills || []).length,
+        balanceAdjustments: (dbState.balanceAdjustments || []).length,
         products: (dbState.products || []).length
       }
     };
@@ -3731,10 +3765,18 @@ const dbController = {
 
   addBalanceAdjustment(data, shouldSave = true) {
     ensureDatabaseReady();
+    const reason = (data.reason || '').trim();
+    if (!reason || reason.length < 3) {
+      throw new Error('A compulsory note/reason (minimum 3 characters) is required to record a balance adjustment.');
+    }
+    const amount = Number(data.amount) || 0;
+    if (amount <= 0) {
+      throw new Error('Adjustment amount must be greater than zero.');
+    }
+
     const id = 'adj_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const count = (dbState.balanceAdjustments || []).length + 1;
     const adjustmentNo = data.adjustmentNo ? data.adjustmentNo.trim() : ('ADJ-' + String(count).padStart(4, '0'));
-    const amount = Number(data.amount) || 0;
 
     const newAdj = {
       id,
@@ -3744,7 +3786,7 @@ const dbController = {
       supplierName: data.supplierName,
       type: data.type || 'debit', // 'debit' (reduces payable / we owe less) or 'credit' (increases payable / we owe more)
       amount,
-      reason: data.reason || 'Balance Adjustment / Rounding to Zero',
+      reason,
       notes: data.notes || '',
       fy: data.fy || getFinancialYear(data.date),
       isLocked: false,
@@ -3772,6 +3814,10 @@ const dbController = {
       throw new Error(`Cannot modify adjustment ${adj.adjustmentNo || adj.id} because it belongs to closed Financial Year (${adj.fy || 'Audited'}). Record is locked.`);
     }
 
+    if (data.reason !== undefined && (!data.reason.trim() || data.reason.trim().length < 3)) {
+      throw new Error('Adjustment reason/note cannot be empty (minimum 3 characters).');
+    }
+
     dbState.balanceAdjustments[index] = {
       ...adj,
       adjustmentNo: data.adjustmentNo !== undefined ? data.adjustmentNo.trim() : adj.adjustmentNo,
@@ -3780,7 +3826,7 @@ const dbController = {
       supplierName: data.supplierName || adj.supplierName,
       type: data.type || adj.type,
       amount: data.amount !== undefined ? Number(data.amount) : adj.amount,
-      reason: data.reason !== undefined ? data.reason : adj.reason,
+      reason: data.reason !== undefined ? data.reason.trim() : adj.reason,
       notes: data.notes !== undefined ? data.notes : adj.notes,
       updatedAt: Date.now()
     };
@@ -4618,16 +4664,22 @@ const dbController = {
     let arrivals = (dbState.arrivals || []).slice();
     let dispatches = (dbState.dispatches || []).slice();
     let settlements = (dbState.settlements || []).slice();
+    let partyBills = (dbState.partyBills || []).slice();
+    let balanceAdjustments = (dbState.balanceAdjustments || []).slice();
 
     if (dateFilter.startDate) {
       arrivals = arrivals.filter(a => a.date >= dateFilter.startDate);
       dispatches = dispatches.filter(d => d.date >= dateFilter.startDate);
       settlements = settlements.filter(s => s.date >= dateFilter.startDate);
+      partyBills = partyBills.filter(b => b.date >= dateFilter.startDate);
+      balanceAdjustments = balanceAdjustments.filter(a => a.date >= dateFilter.startDate);
     }
     if (dateFilter.endDate) {
       arrivals = arrivals.filter(a => a.date <= dateFilter.endDate);
       dispatches = dispatches.filter(d => d.date <= dateFilter.endDate);
       settlements = settlements.filter(s => s.date <= dateFilter.endDate);
+      partyBills = partyBills.filter(b => b.date <= dateFilter.endDate);
+      balanceAdjustments = balanceAdjustments.filter(a => a.date <= dateFilter.endDate);
     }
 
     let dailyTotalWeight = 0;
@@ -4688,6 +4740,15 @@ const dbController = {
       dailySettledEP += (Number(s.settledEndProduct) || 0);
       dailySettledValue += getEffectiveSettlementNetAmount(s);
     });
+
+    let dailyPartyBillsValue = 0;
+    let dailyPartyBillsCount = 0;
+    partyBills.forEach(b => {
+      dailyPartyBillsValue += Number(b.netAmount !== undefined ? b.netAmount : b.amount) || 0;
+      dailyPartyBillsCount++;
+    });
+    // Add service/salary bills to daily billed expenses
+    dailyTotalBill += dailyPartyBillsValue;
 
     const dailyAvgRate = billedArrivalsCount > 0 ? totalRateSum / billedArrivalsCount : 0;
 
@@ -4852,7 +4913,24 @@ const dbController = {
     totalStorageBags += totalOpeningStockBags;
     totalStorageEP += totalOpeningStockEP;
 
-    const netPayableGlobal = netOpeningFinancialBalance + totalPurchasesValue - totalSalesValue - totalPaidAllTime + totalReceivedAllTime;
+    // All-time Party Service & Salary Bills
+    let totalPartyBillsValue = 0;
+    (dbState.partyBills || []).forEach(b => {
+      totalPartyBillsValue += Number(b.netAmount !== undefined ? b.netAmount : b.amount) || 0;
+    });
+
+    // All-time Party Balance Adjustments (Debit reduces what we owe, Credit increases what we owe)
+    let totalBalanceAdjustmentsNet = 0;
+    (dbState.balanceAdjustments || []).forEach(a => {
+      const amt = Number(a.amount) || 0;
+      if (a.type === 'debit') {
+        totalBalanceAdjustmentsNet -= amt;
+      } else {
+        totalBalanceAdjustmentsNet += amt;
+      }
+    });
+
+    const netPayableGlobal = netOpeningFinancialBalance + totalPurchasesValue + totalPartyBillsValue - totalSalesValue - totalPaidAllTime + totalReceivedAllTime + totalBalanceAdjustmentsNet;
 
     // Convert product stock map to array with rounded values & avg outturn
     const storageByProduct = Array.from(productStockMap.values())
@@ -4883,6 +4961,8 @@ const dbController = {
         totalBags: Math.round(dailyTotalBags * 100) / 100,
         totalEndProduct: Math.round(dailyTotalEndProduct * 100) / 100,
         totalBill: Math.round(dailyTotalBill * 100) / 100,
+        partyBillsValue: Math.round(dailyPartyBillsValue * 100) / 100,
+        partyBillsCount: dailyPartyBillsCount,
         storageInBags: Math.round(dailyStorageInBags * 100) / 100,
         storageInEP: Math.round(dailyStorageInEP * 100) / 100,
         dispatchWeight: Math.round(dailyDispatchWeight * 100) / 100,
@@ -4910,7 +4990,9 @@ const dbController = {
         totalOpeningStockBags: Math.round(totalOpeningStockBags * 100) / 100,
         totalOpeningStockEP: Math.round(totalOpeningStockEP * 100) / 100,
         totalPurchasesValue: Math.round(totalPurchasesValue * 100) / 100,
+        totalPartyBillsValue: Math.round(totalPartyBillsValue * 100) / 100,
         totalSalesValue: Math.round(totalSalesValue * 100) / 100,
+        totalBalanceAdjustmentsNet: Math.round(totalBalanceAdjustmentsNet * 100) / 100,
         totalStorageBags: Math.round(totalStorageBags * 100) / 100,
         totalStorageEP: Math.round(totalStorageEP * 100) / 100,
         totalStoreOutBags: Math.round(totalStoreOutBags * 100) / 100,
@@ -5119,6 +5201,8 @@ const dbController = {
       (dbState.dispatches || []).forEach(lockItem);
       (dbState.settlements || []).forEach(lockItem);
       (dbState.payments || []).forEach(lockItem);
+      (dbState.partyBills || []).forEach(lockItem);
+      (dbState.balanceAdjustments || []).forEach(lockItem);
       (dbState.commitments || []).forEach(lockItem);
       (dbState.millingLogs || []).forEach(lockItem);
       (dbState.epTransfers || []).forEach(lockItem);
@@ -5156,6 +5240,8 @@ const dbController = {
           dispatches: (dbState.dispatches || []).filter(d => (d.fy || getFinancialYear(d.date)) === fyToClose),
           settlements: (dbState.settlements || []).filter(s => (s.fy || getFinancialYear(s.date)) === fyToClose),
           payments: (dbState.payments || []).filter(p => (p.fy || getFinancialYear(p.date)) === fyToClose),
+          partyBills: (dbState.partyBills || []).filter(b => (b.fy || getFinancialYear(b.date)) === fyToClose),
+          balanceAdjustments: (dbState.balanceAdjustments || []).filter(a => (a.fy || getFinancialYear(a.date)) === fyToClose),
           millingLogs: (dbState.millingLogs || []).filter(m => (m.fy || getFinancialYear(m.date)) === fyToClose),
           commitments: (dbState.commitments || []).filter(c => (c.fy || getFinancialYear(c.date)) === fyToClose)
         }
@@ -5193,6 +5279,8 @@ const dbController = {
     (dbState.dispatches || []).forEach(unlockItem);
     (dbState.settlements || []).forEach(unlockItem);
     (dbState.payments || []).forEach(unlockItem);
+    (dbState.partyBills || []).forEach(unlockItem);
+    (dbState.balanceAdjustments || []).forEach(unlockItem);
     (dbState.commitments || []).forEach(unlockItem);
     (dbState.millingLogs || []).forEach(unlockItem);
     (dbState.epTransfers || []).forEach(unlockItem);
@@ -5217,6 +5305,8 @@ const dbController = {
     (dbState.dispatches || []).forEach(d => addDate(d.date));
     (dbState.settlements || []).forEach(s => addDate(s.date));
     (dbState.payments || []).forEach(p => addDate(p.date));
+    (dbState.partyBills || []).forEach(b => addDate(b.date));
+    (dbState.balanceAdjustments || []).forEach(a => addDate(a.date));
     (dbState.millingLogs || []).forEach(m => addDate(m.date));
     (dbState.openingStockEntries || []).forEach(o => addDate(o.date));
 
