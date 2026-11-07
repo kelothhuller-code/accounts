@@ -1,0 +1,51 @@
+{
+  "measuredAt": "2026-11-07T06:35:10.386Z",
+  "node": "v22.23.4",
+  "platform": "linux",
+  "arch": "x64",
+  "note": "Isolated temp JSON store. No MongoDB and no production file. Full-file rewrite remains the save path.",
+  "runs": [
+    {
+      "records": 10000,
+      "saveMs": 27.48,
+      "saveHeapDeltaMb": 6.11,
+      "searchMs": 2.95,
+      "searchReturned": 25,
+      "searchTotal": 589,
+      "reportMs": 4.55,
+      "ledgerMs": 5.73,
+      "fileMb": 3.71,
+      "rssMb": 101.71
+    },
+    {
+      "records": 100000,
+      "saveMs": 176.11,
+      "saveHeapDeltaMb": 38.73,
+      "searchMs": 26.1,
+      "searchReturned": 25,
+      "searchTotal": 5883,
+      "reportMs": 8.01,
+      "ledgerMs": 14.86,
+      "fileMb": 37.26,
+      "rssMb": 170.79
+    },
+    {
+      "records": 500000,
+      "saveMs": 1141.83,
+      "saveHeapDeltaMb": 202.4,
+      "searchMs": 82.1,
+      "searchReturned": 25,
+      "searchTotal": 29412,
+      "reportMs": 23.98,
+      "ledgerMs": 74.75,
+      "fileMb": 187.14,
+      "rssMb": 336.18
+    }
+  ],
+  "domainInserts": {
+    "count": 500,
+    "elapsedMs": 2.58,
+    "flushMs": 937.91,
+    "waitedForNetwork": false
+  }
+}

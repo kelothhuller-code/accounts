@@ -335,7 +335,7 @@ export default function CommodityModal({ isOpen, onClose, onAdded }) {
                   <Percent size={15} color="#d97706" /> Default GST Rates *
                 </label>
                 <div style={{ fontSize: '0.8rem', fontWeight: 600, color: totalGst > 0 ? '#b45309' : '#059669', background: totalGst > 0 ? '#fef3c7' : '#ecfdf5', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
-                  Total GST / IGST: {totalGst.toFixed(1)}% {totalGst === 0 ? '(Nil / Exempt)' : ''}
+                  Intra GST {totalGst.toFixed(1)}% or IGST alternative {totalGst.toFixed(1)}% {totalGst === 0 ? '(Nil / Exempt)' : '(not charged together)'}
                 </div>
               </div>
 

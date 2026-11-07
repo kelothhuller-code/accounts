@@ -44,6 +44,8 @@ export default function DispatchesView({
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [summary, setSummary] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -51,7 +53,7 @@ export default function DispatchesView({
 
   useEffect(() => {
     loadDispatches();
-  }, [dataVersion, startDate, endDate]);
+  }, [dataVersion, startDate, endDate, searchQuery, dispatchTypeFilter, billTypeFilter, productFilter, currentPage, pageSize]);
 
   useEffect(() => {
     if (triggerNew > 0) onOpenNewDispatch();
@@ -91,9 +93,27 @@ export default function DispatchesView({
   const loadDispatches = async () => {
     setLoading(true);
     try {
-      const res = await dbAction('dispatches:get', { startDate, endDate });
-      const list = Array.isArray(res) ? res : (res?.items || []);
-      setDispatches(list);
+      const res = await dbAction('dispatches:get', {
+        startDate,
+        endDate,
+        search: searchQuery || undefined,
+        commoditySide: dispatchTypeFilter === 'primary' || dispatchTypeFilter === 'secondary' ? dispatchTypeFilter : undefined,
+        billType: billTypeFilter !== 'all' ? billTypeFilter : undefined,
+        product: productFilter !== 'ALL' ? productFilter : undefined,
+        page: currentPage,
+        limit: pageSize,
+        includeSummary: true
+      });
+      if (res && Array.isArray(res.items)) {
+        setDispatches(res.items);
+        setTotalCount(res.totalCount || 0);
+        setSummary(res.summary || null);
+      } else {
+        const list = Array.isArray(res) ? res : [];
+        setDispatches(list);
+        setTotalCount(list.length);
+        setSummary(null);
+      }
     } catch (e) {
       console.error('Error loading dispatches:', e);
     } finally {
@@ -115,7 +135,8 @@ export default function DispatchesView({
   };
 
   // Filtered List
-  const filteredDispatches = (dispatches || []).filter((d) => {
+  const serverPaged = !!summary;
+  const filteredDispatches = serverPaged ? (dispatches || []) : (dispatches || []).filter((d) => {
     if (!d) return false;
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
@@ -179,16 +200,16 @@ export default function DispatchesView({
   const secondaryDispatches = filteredDispatches.filter((d) => isSecDisp(d));
 
   // Main product metrics
-  const mainOutwardWeight = mainDispatches.reduce((sum, d) => sum + (Number(d.weight) || 0), 0);
-  const mainOutwardBags = mainDispatches.reduce((sum, d) => sum + (Number(d.bags) || 0), 0);
-  const mainOutwardEP = mainDispatches.reduce(
+  const mainOutwardWeight = serverPaged ? summary.main.rawWeight : mainDispatches.reduce((sum, d) => sum + (Number(d.weight) || 0), 0);
+  const mainOutwardBags = serverPaged ? summary.main.bags : mainDispatches.reduce((sum, d) => sum + (Number(d.bags) || 0), 0);
+  const mainOutwardEP = serverPaged ? summary.main.endProduct : mainDispatches.reduce(
     (sum, d) => sum + (Number(d.endProductWeight) || Number(d.weight) || 0),
     0
   );
   const mainStoreOut = mainDispatches.filter(
     (d) => d.rateType === 'storage_out' || d.status === 'storage_out'
   );
-  const mainPendingEP = mainStoreOut.reduce(
+  const mainPendingEP = serverPaged ? summary.main.pendingEp : mainStoreOut.reduce(
     (sum, d) =>
       sum +
       (d.remainingEndProduct !== undefined
@@ -199,27 +220,27 @@ export default function DispatchesView({
   const mainBilledDisps = mainDispatches.filter(
     (d) => d.rateType !== 'storage_out' && d.status !== 'storage_out'
   );
-  const mainBilledEP = mainBilledDisps.reduce(
+  const mainBilledEP = serverPaged ? summary.main.billedEp : mainBilledDisps.reduce(
     (sum, d) => sum + (Number(d.endProductWeight) || Number(d.weight) || 0),
     0
   );
-  const mainBilledValue = mainBilledDisps.reduce(
+  const mainBilledValue = serverPaged ? summary.main.billedValue : mainBilledDisps.reduce(
     (sum, d) => sum + (Number(d.netAmount) || Number(d.billAmount) || 0),
     0
   );
-  const mainAvgRate = mainBilledEP > 0 ? (mainBilledValue / mainBilledEP).toFixed(2) : '0';
+  const mainAvgRate = serverPaged ? summary.main.avgRate : (mainBilledEP > 0 ? (mainBilledValue / mainBilledEP).toFixed(2) : '0');
 
   // Secondary product metrics
-  const secondaryOutwardWeight = secondaryDispatches.reduce((sum, d) => sum + (Number(d.weight) || 0), 0);
-  const secondaryOutwardBags = secondaryDispatches.reduce((sum, d) => sum + (Number(d.bags) || 0), 0);
-  const secondaryOutwardEP = secondaryDispatches.reduce(
+  const secondaryOutwardWeight = serverPaged ? summary.secondary.rawWeight : secondaryDispatches.reduce((sum, d) => sum + (Number(d.weight) || 0), 0);
+  const secondaryOutwardBags = serverPaged ? summary.secondary.bags : secondaryDispatches.reduce((sum, d) => sum + (Number(d.bags) || 0), 0);
+  const secondaryOutwardEP = serverPaged ? summary.secondary.endProduct : secondaryDispatches.reduce(
     (sum, d) => sum + (Number(d.endProductWeight) || Number(d.weight) || 0),
     0
   );
   const secStoreOut = secondaryDispatches.filter(
     (d) => d.rateType === 'storage_out' || d.status === 'storage_out'
   );
-  const secPendingEP = secStoreOut.reduce(
+  const secPendingEP = serverPaged ? summary.secondary.pendingEp : secStoreOut.reduce(
     (sum, d) =>
       sum +
       (d.remainingEndProduct !== undefined
@@ -230,30 +251,30 @@ export default function DispatchesView({
   const secBilledDisps = secondaryDispatches.filter(
     (d) => d.rateType !== 'storage_out' && d.status !== 'storage_out'
   );
-  const secondaryBilledEP = secBilledDisps.reduce(
+  const secondaryBilledEP = serverPaged ? summary.secondary.billedEp : secBilledDisps.reduce(
     (sum, d) => sum + (Number(d.endProductWeight) || Number(d.weight) || 0),
     0
   );
-  const secondaryBilledValue = secBilledDisps.reduce(
+  const secondaryBilledValue = serverPaged ? summary.secondary.billedValue : secBilledDisps.reduce(
     (sum, d) => sum + (Number(d.netAmount) || Number(d.billAmount) || 0),
     0
   );
-  const secondaryAvgRate = secondaryBilledEP > 0 ? (secondaryBilledValue / secondaryBilledEP).toFixed(2) : '0';
+  const secondaryAvgRate = serverPaged ? summary.secondary.avgRate : (secondaryBilledEP > 0 ? (secondaryBilledValue / secondaryBilledEP).toFixed(2) : '0');
 
-  const totalBilledSales = filteredDispatches.reduce(
+  const totalBilledSales = serverPaged ? summary.billedSales : filteredDispatches.reduce(
     (sum, d) => sum + (Number(d.netAmount) || Number(d.billAmount) || 0),
     0
   );
-  const totalGst = filteredDispatches.reduce(
+  const totalGst = serverPaged ? summary.gst : filteredDispatches.reduce(
     (sum, d) =>
       sum +
       ((Number(d.cgstAmount) || 0) + (Number(d.sgstAmount) || 0) + (Number(d.igstAmount) || 0)),
     0
   );
 
-  // Pagination calculations
-  const totalPages = Math.ceil(filteredDispatches.length / pageSize) || 1;
-  const paginatedDispatches = filteredDispatches.slice(
+  const visibleCount = serverPaged ? totalCount : filteredDispatches.length;
+  const totalPages = Math.ceil(visibleCount / pageSize) || 1;
+  const paginatedDispatches = serverPaged ? filteredDispatches : filteredDispatches.slice(
     (currentPage - 1) * pageSize,
     currentPage * pageSize
   );
@@ -359,7 +380,16 @@ export default function DispatchesView({
   };
 
   const handleExportCsv = async () => {
-    const exportData = filteredDispatches.map((d) => ({
+    const full = await dbAction('dispatches:get', {
+      startDate,
+      endDate,
+      search: searchQuery || undefined,
+      commoditySide: dispatchTypeFilter === 'primary' || dispatchTypeFilter === 'secondary' ? dispatchTypeFilter : undefined,
+      billType: billTypeFilter !== 'all' ? billTypeFilter : undefined,
+      product: productFilter !== 'ALL' ? productFilter : undefined
+    });
+    const exportRows = Array.isArray(full) ? full : (full?.items || filteredDispatches);
+    const exportData = exportRows.map((d) => ({
       'Dispatch No': d.dispatchNo,
       Date: d.date,
       'Party Name': d.supplierName,
@@ -571,7 +601,7 @@ export default function DispatchesView({
             <div className="card-title" style={{ fontSize: '1rem' }}>
               <PackageCheck size={18} color="#2563eb" />
               <span>Dispatch Entries</span>
-              <span className="badge badge-coffee">{filteredDispatches.length}</span>
+              <span className="badge badge-coffee">{visibleCount}</span>
             </div>
 
             {/* Searchable Commodity Filter */}
@@ -666,7 +696,7 @@ export default function DispatchesView({
                     Loading dispatches...
                   </td>
                 </tr>
-              ) : filteredDispatches.length === 0 ? (
+              ) : visibleCount === 0 ? (
                 <tr>
                   <td colSpan="15" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
                     No dispatch records found for this filter. Click <strong>+ New Dispatch (Alt+K)</strong> to add.
@@ -822,7 +852,7 @@ export default function DispatchesView({
                 })
               )}
             </tbody>
-            {filteredDispatches.length > 0 && (
+            {visibleCount > 0 && (
               <tfoot style={{ background: '#f8fafc', borderTop: '2px solid #cbd5e1', fontWeight: 700 }}>
                 <tr>
                   <td
@@ -834,7 +864,7 @@ export default function DispatchesView({
                       color: '#475569',
                     }}
                   >
-                    Grand Totals ({filteredDispatches.length} Items)
+                    Grand Totals ({visibleCount} Items)
                   </td>
                   <td className="num" style={{ fontFamily: 'var(--font-mono)', color: '#0f172a' }}>
                     {totalWeight.toLocaleString()} kg
@@ -862,7 +892,7 @@ export default function DispatchesView({
             )}
           </table>
         </div>
-        {renderPaginationControls(filteredDispatches.length)}
+        {renderPaginationControls(visibleCount)}
       </div>
     </div>
   );

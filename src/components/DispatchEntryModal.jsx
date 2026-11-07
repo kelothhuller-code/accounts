@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import SearchableSupplierSelect from './SearchableSupplierSelect';
 import SearchableProductSelect from './SearchableProductSelect';
 import { dbAction } from '../utils/api';
+import gst from '../../shared/gst.cjs';
 import { X, Save, AlertCircle, Calculator, Tag, FileText, Check, Edit2 } from 'lucide-react';
 
 export default function DispatchEntryModal({
@@ -44,6 +45,7 @@ export default function DispatchEntryModal({
   const [cgstRate, setCgstRate] = useState(0);
   const [sgstRate, setSgstRate] = useState(0);
   const [igstRate, setIgstRate] = useState(0);
+  const [taxTreatment, setTaxTreatment] = useState('intra');
   const [tdsRate, setTdsRate] = useState(0);
   const [tcsRate, setTcsRate] = useState(0);
 
@@ -88,6 +90,7 @@ export default function DispatchEntryModal({
       setCgstRate(dispatchToEdit.cgstRate !== undefined ? dispatchToEdit.cgstRate : 0);
       setSgstRate(dispatchToEdit.sgstRate !== undefined ? dispatchToEdit.sgstRate : 0);
       setIgstRate(dispatchToEdit.igstRate !== undefined ? dispatchToEdit.igstRate : 0);
+      setTaxTreatment(gst.inferTaxTreatmentFromStoredAmounts(dispatchToEdit));
       setTdsRate(dispatchToEdit.tdsRate !== undefined ? dispatchToEdit.tdsRate : 0);
       setTcsRate(dispatchToEdit.tcsRate !== undefined ? dispatchToEdit.tcsRate : 0);
       setRemarks(dispatchToEdit.remarks || '');
@@ -184,6 +187,7 @@ export default function DispatchEntryModal({
     setCgstRate(0);
     setSgstRate(0);
     setIgstRate(0);
+    setTaxTreatment('intra');
     setTdsRate(0);
     setTcsRate(0);
     setRemarks('');
@@ -237,15 +241,24 @@ export default function DispatchEntryModal({
     }
   }
 
-  const calcCgst = Math.round((calcTaxable * (numCgst / 100)) * 100) / 100;
-  const calcSgst = Math.round((calcTaxable * (numSgst / 100)) * 100) / 100;
-  const calcIgst = Math.round((calcTaxable * (numIgst / 100)) * 100) / 100;
-  const calcGstTotal = calcCgst + calcSgst + calcIgst;
-  const calcBillGross = calcTaxable + calcGstTotal;
-  
-  const calcTdsAmount = Math.round((calcTaxable * (numTds / 100)) * 100) / 100;
-  const calcTcsAmount = Math.round((calcTaxable * (numTcs / 100)) * 100) / 100;
-  const calcNetAmount = Math.round((calcBillGross - calcTdsAmount - calcTcsAmount) * 100) / 100;
+  const previewTax = gst.computeDocumentTax({
+    billType,
+    taxableAmount: calcTaxable,
+    taxTreatment: billType === 'gst_bill' ? taxTreatment : 'none',
+    cgstRate: numCgst,
+    sgstRate: numSgst,
+    igstRate: numIgst,
+    tdsRate: numTds,
+    tcsRate: numTcs
+  });
+  const calcCgst = previewTax.cgstAmount;
+  const calcSgst = previewTax.sgstAmount;
+  const calcIgst = previewTax.igstAmount;
+  const calcGstTotal = previewTax.gstTotal;
+  const calcBillGross = previewTax.billAmount;
+  const calcTdsAmount = previewTax.tdsAmount;
+  const calcTcsAmount = previewTax.tcsAmount;
+  const calcNetAmount = previewTax.netAmount;
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -294,6 +307,7 @@ export default function DispatchEntryModal({
         rateUnit,
         rate: rateType === 'storage_out' ? 0 : numRate,
         billType,
+        taxTreatment: billType === 'gst_bill' ? taxTreatment : 'none',
         cgstRate: numCgst,
         cgstAmount: calcCgst,
         sgstRate: numSgst,
@@ -461,6 +475,8 @@ export default function DispatchEntryModal({
                   if (pObj.cgstRate !== undefined) setCgstRate(pObj.cgstRate);
                   if (pObj.sgstRate !== undefined) setSgstRate(pObj.sgstRate);
                   if (pObj.igstRate !== undefined) setIgstRate(pObj.igstRate);
+                  else setIgstRate((Number(pObj.cgstRate) || 0) + (Number(pObj.sgstRate) || 0));
+                  setTaxTreatment('intra');
                   if (pObj.calculationBasis === 'end_product' && pObj.defaultOutturn) {
                     setOutturn(String(pObj.defaultOutturn));
                     if (pObj.defaultOutturnType) setOutturnType(pObj.defaultOutturnType);
@@ -722,9 +738,18 @@ export default function DispatchEntryModal({
                   </div>
                 </div>
 
-                {/* Tax Breakdown Grid (CGST, SGST & TDS) */}
+                {/* Tax treatment is mutually exclusive: intra CGST+SGST or inter IGST, never both. */}
                 <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px dashed #cbd5e1' }}>
                   {billType === 'gst_bill' ? (
+                    <>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.55rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span className="form-label" style={{ marginBottom: 0 }}>GST treatment</span>
+                      <button type="button" className="btn btn-sm" onClick={() => setTaxTreatment('intra')} style={{ background: taxTreatment === 'intra' ? '#dbeafe' : '#fff' }}>Intra-state CGST+SGST</button>
+                      <button type="button" className="btn btn-sm" onClick={() => setTaxTreatment('inter')} style={{ background: taxTreatment === 'inter' ? '#dbeafe' : '#fff' }}>Inter-state IGST</button>
+                      <small style={{ color: '#64748b' }}>
+                        {taxTreatment === 'intra' ? `Applied split ₹${calcGstTotal.toLocaleString()} (IGST not added)` : `Applied IGST ₹${calcIgst.toLocaleString()} (CGST/SGST not added)`}
+                      </small>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '0.75rem' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>CGST %</label>
@@ -774,6 +799,7 @@ export default function DispatchEntryModal({
                         />
                       </div>
                     </div>
+                    </>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxWidth: '360px' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>

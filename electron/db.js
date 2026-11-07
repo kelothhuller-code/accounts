@@ -1,43 +1,46 @@
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
 const mongoose = require('mongoose');
+const { computeDocumentTax } = require('../shared/gst.cjs');
+const { resolveTransferQuantities, planAllocations, roundQty } = require('../shared/epTransfer.cjs');
+const { summarizeArrivals, summarizeDispatches, isSecondaryDispatch } = require('../shared/listPage.cjs');
 
-// File storage fallback path in userData
+let electronApp = null;
+try {
+  const electron = require('electron');
+  if (electron && typeof electron === 'object' && electron.app) electronApp = electron.app;
+} catch (e) {
+  electronApp = null;
+}
+
+// File storage fallback path in userData. COMMODITY_DATA_DIR isolates tests from the app store.
 const getUserDataPath = () => {
+  if (process.env.COMMODITY_DATA_DIR) return process.env.COMMODITY_DATA_DIR;
   try {
-    return app ? app.getPath('userData') : path.join(process.cwd(), 'data');
+    return electronApp ? electronApp.getPath('userData') : path.join(process.cwd(), 'data');
   } catch (e) {
     return path.join(process.cwd(), 'data');
   }
 };
 
-const dataDir = getUserDataPath();
-if (!fs.existsSync(dataDir)) {
-  try {
-    fs.mkdirSync(dataDir, { recursive: true });
-  } catch (e) {
-    console.error('Error creating data directory:', e);
+let dataDir = getUserDataPath();
+let localDbFile = path.join(dataDir, 'commodity_store.json');
+let oldDbFile = path.join(dataDir, 'coffee_store.json');
+let backupsDir = path.join(dataDir, 'backups');
+let archivesDir = path.join(dataDir, 'archives');
+
+function ensureStorageDirs() {
+  for (const dir of [dataDir, backupsDir, archivesDir]) {
+    if (!fs.existsSync(dir)) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch (e) {
+        console.error('Error creating data directory:', e);
+      }
+    }
   }
 }
-const localDbFile = path.join(dataDir, 'commodity_store.json');
-const oldDbFile = path.join(dataDir, 'coffee_store.json');
-const backupsDir = path.join(dataDir, 'backups');
-if (!fs.existsSync(backupsDir)) {
-  try {
-    fs.mkdirSync(backupsDir, { recursive: true });
-  } catch (e) {
-    console.error('Error creating backups directory:', e);
-  }
-}
-const archivesDir = path.join(dataDir, 'archives');
-if (!fs.existsSync(archivesDir)) {
-  try {
-    fs.mkdirSync(archivesDir, { recursive: true });
-  } catch (e) {
-    console.error('Error creating archives directory:', e);
-  }
-}
+ensureStorageDirs();
 
 
 // Default products list - empty array so no products are predefined by default
@@ -261,6 +264,247 @@ function getEffectiveSettlementNetAmount(set) {
   return net || billBase;
 }
 
+function authoritativeTax(billType, taxableAmount, data, rates) {
+  const tax = computeDocumentTax({
+    billType,
+    taxableAmount,
+    taxTreatment: data.taxTreatment,
+    cgstRate: rates.cgstRate,
+    sgstRate: rates.sgstRate,
+    igstRate: rates.igstRate,
+    tdsRate: rates.tdsRate,
+    tcsRate: rates.tcsRate,
+    tdsAmount: data.tdsAmount,
+    tcsAmount: data.tcsAmount
+  });
+  let submittedNetAmountIgnored = null;
+  if (data.netAmount !== undefined && data.netAmount !== null && data.netAmount !== '') {
+    const submitted = Number(data.netAmount);
+    if (Number.isFinite(submitted) && Math.abs(submitted - tax.netAmount) > 0.009) {
+      submittedNetAmountIgnored = submitted;
+    }
+  }
+  return { ...tax, submittedNetAmountIgnored };
+}
+
+function nextMonotonic(counterKey) {
+  if (!dbState.counters || typeof dbState.counters !== 'object' || Array.isArray(dbState.counters)) {
+    dbState.counters = {};
+  }
+  const n = (Number(dbState.counters[counterKey]) || 0) + 1;
+  dbState.counters[counterKey] = n;
+  return n;
+}
+
+function blankState() {
+  return {
+    suppliers: [],
+    products: [],
+    arrivals: [],
+    dispatches: [],
+    commitments: [],
+    settlements: [],
+    payments: [],
+    partyBills: [],
+    balanceAdjustments: [],
+    epTransfers: [],
+    commitmentWashes: [],
+    millingLogs: [],
+    openingStockEntries: [],
+    counters: {},
+    botIdempotency: {},
+    settings: {
+      mongoUri: '',
+      defaultTcsRate: 0.1,
+      defaultCgstRate: 0,
+      defaultSgstRate: 0,
+      defaultTdsRate: 0.1,
+      companyName: 'Global Commodity Trading & Processing Co.',
+      autoBagsWeight: 50,
+      openingStock: {
+        coffeeBags: 0,
+        coffeeWeight: 0,
+        coffeeEP: 0,
+        huskBags: 0,
+        huskWeight: 0
+      }
+    }
+  };
+}
+
+function epTransferStockAlreadyOnLots(trf, arrivals, dispatches) {
+  if (trf && Array.isArray(trf.allocations) && trf.allocations.length > 0) return true;
+  if ((arrivals || []).some(a => a.transferId === trf.id)) return true;
+  if ((dispatches || []).some(d => d.transferId === trf.id)) return true;
+  return false;
+}
+
+function legacyTransferOutEp(partyId, product) {
+  let total = 0;
+  for (const d of dbState.dispatches || []) {
+    if (!d.transferId) continue;
+    if ((d.supplierId || d.partyId) !== partyId) continue;
+    if (product && d.product !== product) continue;
+    if (!(d.status === 'storage_out' || d.rateType === 'storage_out')) continue;
+    const trf = (dbState.epTransfers || []).find(t => t.id === d.transferId);
+    if (trf && Array.isArray(trf.allocations) && trf.allocations.length > 0) continue;
+    const ep = d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : Number(d.endProductWeight || d.weight || 0);
+    total += ep;
+  }
+  return roundQty(total);
+}
+
+function collectSourceLots(partyId, product, transferType) {
+  const lots = [];
+  if (transferType === 'store_out') {
+    for (const d of dbState.dispatches || []) {
+      if ((d.supplierId || d.partyId) !== partyId) continue;
+      if (product && d.product !== product) continue;
+      if (!(d.status === 'storage_out' || d.rateType === 'storage_out')) continue;
+      if (d.transferId) continue;
+      lots.push({
+        id: d.id,
+        kind: 'dispatch',
+        date: d.date,
+        createdAt: d.createdAt,
+        product: d.product,
+        remainingEndProduct: d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : Number(d.endProductWeight || d.weight || 0),
+        remainingBags: d.remainingBags !== undefined ? Number(d.remainingBags) : Number(d.bags || 0),
+        settledEndProduct: Number(d.settledEndProduct) || 0,
+        settlementIds: d.settlementIds || []
+      });
+    }
+    return lots;
+  }
+  for (const a of dbState.arrivals || []) {
+    if (a.supplierId !== partyId) continue;
+    if (product && a.product !== product) continue;
+    if (!(a.status === 'storage' || a.status === 'partial_settled')) continue;
+    lots.push({
+      id: a.id,
+      kind: 'arrival',
+      date: a.date,
+      createdAt: a.createdAt,
+      product: a.product,
+      remainingEndProduct: a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0),
+      remainingBags: a.remainingBags !== undefined ? Number(a.remainingBags) : Number(a.bags || 0),
+      settledEndProduct: Number(a.settledEndProduct) || 0,
+      settlementIds: a.settlementIds || []
+    });
+  }
+  return lots;
+}
+
+function availableEpForTransfer(party, product, transferType) {
+  const lots = collectSourceLots(party.id, product, transferType);
+  const lotEp = lots.reduce((sum, lot) => sum + (Number(lot.remainingEndProduct) || 0), 0);
+  if (transferType === 'store_out') return roundQty(lotEp);
+  const opening = Number(party.openingStorageEP) || 0;
+  const legacyOut = legacyTransferOutEp(party.id, product);
+  return roundQty(opening + lotEp - legacyOut);
+}
+
+function lotRecord(lot) {
+  if (lot.kind === 'arrival') return (dbState.arrivals || []).find(a => a.id === lot.id);
+  if (lot.kind === 'dispatch') return (dbState.dispatches || []).find(d => d.id === lot.id);
+  return null;
+}
+
+function applyAllocation(allocation, sign) {
+  if (allocation.lotKind === 'opening') {
+    return;
+  }
+  const rec = allocation.lotKind === 'arrival'
+    ? (dbState.arrivals || []).find(a => a.id === allocation.lotId)
+    : (dbState.dispatches || []).find(d => d.id === allocation.lotId);
+  if (!rec) throw new Error(`Source lot ${allocation.lotId} no longer exists.`);
+  const settledNow = Number(rec.settledEndProduct) || 0;
+  const settlementsNow = Array.isArray(rec.settlementIds) ? rec.settlementIds.length : 0;
+  if (sign > 0) {
+    if (Math.abs(settledNow - (Number(allocation.settledEndProductAtTransfer) || 0)) > 0.001 || settlementsNow !== (allocation.settlementCountAtTransfer || 0)) {
+      throw new Error(`Cannot restore lot ${allocation.lotId}: a later settlement changed it. Delete that settlement first.`);
+    }
+  }
+  const remEP = rec.remainingEndProduct !== undefined ? Number(rec.remainingEndProduct) : Number(rec.endProductWeight || rec.weight || 0);
+  const remBags = rec.remainingBags !== undefined ? Number(rec.remainingBags) : Number(rec.bags || 0);
+  rec.remainingEndProduct = roundQty(Math.max(0, remEP - (sign * (Number(allocation.endProduct) || 0))));
+  rec.remainingBags = roundQty(Math.max(0, remBags - (sign * (Number(allocation.bags) || 0))));
+  if (allocation.lotKind === 'arrival' && rec.status === 'storage' && rec.remainingEndProduct <= 0.001) {
+    rec.status = 'storage';
+  }
+  rec.updatedAt = Date.now();
+}
+
+function recognizeLegacyManualEpMove({ fromPartyId, toPartyId, endProductWeight, remarkNeedle } = {}) {
+  const ep = Number(endProductWeight);
+  const needle = String(remarkNeedle || '').trim().toLowerCase();
+  if (!fromPartyId || !toPartyId || !(ep > 0)) return { recognized: false, pairs: [], ambiguous: false };
+  const textOf = (doc) => `${doc.notes || ''} ${doc.remarks || ''} ${doc.legacyDisplayNo || ''}`.toLowerCase();
+  const sources = (dbState.dispatches || []).filter(d => {
+    if ((d.supplierId || d.partyId) !== fromPartyId) return false;
+    if (!(d.status === 'storage_out' || d.rateType === 'storage_out')) return false;
+    if (d.transferId) return false;
+    const qty = Number(d.endProductWeight || d.weight || 0);
+    return Math.abs(qty - ep) < 0.02;
+  });
+  const dests = (dbState.arrivals || []).filter(a => {
+    if (a.supplierId !== toPartyId) return false;
+    if (a.transferId) return false;
+    if (!(a.status === 'storage' || a.status === 'partial_settled')) return false;
+    if ((Number(a.rate) || 0) !== 0) return false;
+    const qty = a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0);
+    return Math.abs(qty - ep) < 0.02;
+  });
+  const pairs = [];
+  for (const source of sources) {
+    for (const dest of dests) {
+      if (needle && !textOf(source).includes(needle) && !textOf(dest).includes(needle)) continue;
+      pairs.push({
+        sourceId: source.id,
+        destId: dest.id,
+        endProductWeight: ep,
+        sourceRemark: source.notes || source.remarks || '',
+        destRemark: dest.notes || dest.remarks || ''
+      });
+    }
+  }
+  return { recognized: pairs.length > 0, pairs, ambiguous: pairs.length > 1 };
+}
+
+function queryNewest(records, match, filter, summarize) {
+  const wantPage = filter && filter.page && filter.limit;
+  const wantSummary = filter && (filter.includeSummary === true || filter.includeSummary === 'true');
+  if (!wantPage) {
+    const list = [];
+    for (let i = records.length - 1; i >= 0; i--) {
+      if (match(records[i])) list.push(records[i]);
+    }
+    if (!wantSummary) return list;
+    return { items: list, totalCount: list.length, summary: summarize(list) };
+  }
+  const page = Math.max(1, parseInt(filter.page, 10) || 1);
+  const limit = Math.max(1, parseInt(filter.limit, 10) || 50);
+  const start = (page - 1) * limit;
+  const items = [];
+  const matched = wantSummary ? [] : null;
+  let total = 0;
+  for (let i = records.length - 1; i >= 0; i--) {
+    const rec = records[i];
+    if (!match(rec)) continue;
+    if (matched) matched.push(rec);
+    if (total >= start && items.length < limit) items.push(rec);
+    total += 1;
+  }
+  return {
+    items,
+    totalCount: total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit) || 1),
+    summary: wantSummary ? summarize(matched) : undefined
+  };
+}
+
 // Global check whether a product is a secondary/by‑product (O(1) cached)
 function isSecondaryProduct(pName) {
   if (!pName) return false;
@@ -400,9 +644,15 @@ function saveLocalDb(options = {}) {
   saveDebounceTimer = setTimeout(flushDbToDiskAsync, 40);
 }
 
-// MongoDB connection status
+// MongoDB connection status. cloudSuspendDepth lets local bot commits skip the network
+// without changing the real connection flag used by enforce-mongo checks.
 let isMongoConnected = false;
 let mongoError = null;
+let cloudSuspendDepth = 0;
+
+function cloudSyncEnabled() {
+  return cloudSuspendDepth === 0 && isMongoConnected;
+}
 
 // Initialize Mongoose connection with graceful fallback
 async function initMongo(uri) {
@@ -912,7 +1162,7 @@ function deduplicateSuppliersInDb() {
 
     saveLocalDb();
 
-    if (isMongoConnected && MongoSupplier) {
+    if (cloudSyncEnabled() && MongoSupplier) {
       for (const dupId of duplicateReplacements.keys()) {
         MongoSupplier.deleteOne({ id: dupId }).catch(() => {});
       }
@@ -1304,17 +1554,22 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     const val = Number(trf.transferValue) || 0;
     const ep = Number(trf.endProductWeight) || 0;
     const b = Number(trf.bags) || 0;
+    const postedOnLots = epTransferStockAlreadyOnLots(trf, arrivals, dispatches);
 
     if (trf.fromPartyId === supplierId) {
       epTransferredOut += ep;
-      storageEndProduct = storageEndProduct - ep;
-      storageBags = storageBags - b;
+      if (!postedOnLots) {
+        storageEndProduct = storageEndProduct - ep;
+        storageBags = storageBags - b;
+      }
       transferFinancialNet -= val;
     }
     if (trf.toPartyId === supplierId) {
       epTransferredIn += ep;
-      storageEndProduct += ep;
-      storageBags += b;
+      if (!postedOnLots) {
+        storageEndProduct += ep;
+        storageBags += b;
+      }
       transferFinancialNet += val;
     }
   });
@@ -1462,6 +1717,7 @@ function calculateSupplierLedger(supplierId, pregrouped = null, maxDate = null) 
     totalTcsDeducted: Math.round(totalTcsDeducted * 100) / 100,
     epTransferredOut: Math.round(epTransferredOut * 100) / 100,
     epTransferredIn: Math.round(epTransferredIn * 100) / 100,
+    transferFinancialNet: Math.round(transferFinancialNet * 100) / 100,
     netPayable: Math.round(netPayable * 100) / 100,
     arrivalsCount: arrivals.length,
     dispatchesCount: dispatches.length,
@@ -1695,7 +1951,7 @@ const dbController = {
     dbState.products.push(newProduct);
     rebuildProductIndices();
     saveLocalDb();
-    if (isMongoConnected && MongoProduct) {
+    if (cloudSyncEnabled() && MongoProduct) {
       MongoProduct.findOneAndUpdate({ id: newProduct.id }, newProduct, { upsert: true }).catch(e => console.error(e));
     }
     return newProduct;
@@ -1728,7 +1984,7 @@ const dbController = {
     dbState.products[index] = updated;
     rebuildProductIndices();
     saveLocalDb();
-    if (isMongoConnected && MongoProduct) {
+    if (cloudSyncEnabled() && MongoProduct) {
       MongoProduct.findOneAndUpdate({ id: updated.id }, updated, { upsert: true }).catch(e => console.error(e));
     }
     return dbState.products[index];
@@ -1746,7 +2002,7 @@ const dbController = {
     dbState.products.splice(index, 1);
     rebuildProductIndices();
     saveLocalDb();
-    if (isMongoConnected && MongoProduct) {
+    if (cloudSyncEnabled() && MongoProduct) {
       MongoProduct.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -1818,7 +2074,7 @@ const dbController = {
       const summary = calculateSupplierLedger(id);
       if (shouldSave) {
         saveLocalDb();
-        if (isMongoConnected && MongoSupplier) {
+        if (cloudSyncEnabled() && MongoSupplier) {
           MongoSupplier.findOneAndUpdate({ id }, newSupplier, { upsert: true }).catch(e => console.error(e));
         }
       }
@@ -1870,7 +2126,7 @@ const dbController = {
     }
 
     saveLocalDb();
-    if (isMongoConnected && MongoSupplier) {
+    if (cloudSyncEnabled() && MongoSupplier) {
       MongoSupplier.findOneAndUpdate({ id }, dbState.suppliers[index]).catch(e => console.error(e));
     }
     return calculateSupplierLedger(id);
@@ -1893,7 +2149,7 @@ const dbController = {
 
     dbState.suppliers.splice(index, 1);
     saveLocalDb();
-    if (isMongoConnected && MongoSupplier) {
+    if (cloudSyncEnabled() && MongoSupplier) {
       MongoSupplier.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -1909,7 +2165,7 @@ const dbController = {
     return list.slice().reverse();
   },
 
-  addCommitment(data) {
+  addCommitment(data, shouldSave = true) {
     ensureDatabaseReady();
     const id = 'com_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const count = dbState.commitments.length + 1;
@@ -1932,14 +2188,17 @@ const dbController = {
       status: 'active',
       date: data.date || new Date().toISOString().split('T')[0],
       notes: data.notes || '',
+      legacyDisplayNo: data.legacyDisplayNo || undefined,
       updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
 
     dbState.commitments.push(newCommitment);
-    saveLocalDb();
-    if (isMongoConnected && MongoCommitment) {
-      MongoCommitment.findOneAndUpdate({ id }, newCommitment, { upsert: true }).catch(e => console.error(e));
+    if (shouldSave) {
+      saveLocalDb();
+      if (cloudSyncEnabled() && MongoCommitment) {
+        MongoCommitment.findOneAndUpdate({ id }, newCommitment, { upsert: true }).catch(e => console.error(e));
+      }
     }
     return newCommitment;
   },
@@ -1977,7 +2236,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoCommitment) {
+    if (cloudSyncEnabled() && MongoCommitment) {
       MongoCommitment.findOneAndUpdate({ id }, dbState.commitments[index]).catch(e => console.error(e));
     }
     return dbState.commitments[index];
@@ -2010,7 +2269,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoCommitment) {
+    if (cloudSyncEnabled() && MongoCommitment) {
       MongoCommitment.findOneAndUpdate({ id }, dbState.commitments[index]).catch(e => console.error(e));
     }
     return dbState.commitments[index];
@@ -2026,7 +2285,7 @@ const dbController = {
 
     dbState.commitments.splice(index, 1);
     saveLocalDb();
-    if (isMongoConnected && MongoCommitment) {
+    if (cloudSyncEnabled() && MongoCommitment) {
       MongoCommitment.deleteOne({ id }).catch(e => console.error(e));
     }
     return true;
@@ -2116,7 +2375,7 @@ const dbController = {
 
     dbState.commitmentWashes.push(newWash);
     saveLocalDb();
-    if (isMongoConnected && MongoCommitmentWash) {
+    if (cloudSyncEnabled() && MongoCommitmentWash) {
       MongoCommitmentWash.findOneAndUpdate({ id }, newWash, { upsert: true }).catch(e => console.error(e));
     }
     return newWash;
@@ -2134,52 +2393,20 @@ const dbController = {
   // ARRIVALS (PURCHASES & STORE IN)
   getArrivals(filter = {}) {
     ensureDatabaseReady();
-    let list = dbState.arrivals.slice();
-    if (filter.fy && filter.fy !== 'ALL') {
-      list = list.filter(a => (a.fy || getFinancialYear(a.date)) === filter.fy);
-    }
-    if (filter.supplierId) {
-      list = list.filter(a => a.supplierId === filter.supplierId);
-    }
-    if (filter.product) {
-      list = list.filter(a => a.product === filter.product);
-    }
-    if (filter.status) {
-      list = list.filter(a => a.status === filter.status);
-    }
-    if (filter.startDate) {
-      list = list.filter(a => a.date >= filter.startDate);
-    }
-    if (filter.endDate) {
-      list = list.filter(a => a.date <= filter.endDate);
-    }
-    if (filter.search) {
-      const q = filter.search.toLowerCase();
-      list = list.filter(a =>
-        (a.arrivalNo && a.arrivalNo.toLowerCase().includes(q)) ||
-        (a.supplierName && a.supplierName.toLowerCase().includes(q)) ||
-        (a.product && a.product.toLowerCase().includes(q)) ||
-        (a.vehicleNo && a.vehicleNo.toLowerCase().includes(q))
-      );
-    }
-    list.reverse();
-
-    if (filter.page && filter.limit) {
-      const page = Math.max(1, parseInt(filter.page, 10) || 1);
-      const limit = Math.max(1, parseInt(filter.limit, 10) || 50);
-      const totalCount = list.length;
-      const totalPages = Math.ceil(totalCount / limit);
-      const items = list.slice((page - 1) * limit, page * limit);
-      return {
-        items,
-        totalCount,
-        page,
-        limit,
-        totalPages
-      };
-    }
-
-    return list;
+    const q = filter.search ? String(filter.search).toLowerCase() : '';
+    return queryNewest(dbState.arrivals || [], (a) => {
+      if (filter.fy && filter.fy !== 'ALL' && (a.fy || getFinancialYear(a.date)) !== filter.fy) return false;
+      if (filter.supplierId && a.supplierId !== filter.supplierId) return false;
+      if (filter.product && a.product !== filter.product) return false;
+      if (filter.status && a.status !== filter.status) return false;
+      if (filter.startDate && !(a.date >= filter.startDate)) return false;
+      if (filter.endDate && !(a.date <= filter.endDate)) return false;
+      if (q) {
+        const hay = `${a.arrivalNo || ''} ${a.supplierName || ''} ${a.product || ''} ${a.vehicleNo || ''} ${a.legacyDisplayNo || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }, filter, summarizeArrivals);
   },
 
   addArrival(data, shouldSave = true) {
@@ -2230,6 +2457,8 @@ const dbController = {
 
     let billAmount = 0;
     let netAmount = 0;
+    let taxTreatment = 'none';
+    let submittedNetAmountIgnored = null;
     let status = 'billed';
     let commitmentId = data.commitmentId || null;
 
@@ -2268,20 +2497,19 @@ const dbController = {
         taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
       }
 
-      if (billType === 'gst_bill') {
-        if (igstRate > 0) {
-          igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
-        } else {
-          cgstAmount = Math.round((taxableAmount * (cgstRate / 100)) * 100) / 100;
-          sgstAmount = Math.round((taxableAmount * (sgstRate / 100)) * 100) / 100;
-        }
-      }
-      billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
-
-      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
-
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tdsAmount - tcsAmount) * 100) / 100;
+      const tax = authoritativeTax(billType, taxableAmount, data, { cgstRate, sgstRate, igstRate, tdsRate, tcsRate });
+      cgstAmount = tax.cgstAmount;
+      sgstAmount = tax.sgstAmount;
+      igstAmount = tax.igstAmount;
+      cgstRate = tax.cgstRate;
+      sgstRate = tax.sgstRate;
+      igstRate = tax.igstRate;
+      billAmount = tax.billAmount;
+      tdsAmount = tax.tdsAmount;
+      tcsAmount = tax.tcsAmount;
+      netAmount = tax.netAmount;
+      taxTreatment = tax.taxTreatment;
+      submittedNetAmountIgnored = tax.submittedNetAmountIgnored;
       status = billType === 'cash_bill' ? 'cash_bill' : 'billed';
     }
 
@@ -2304,6 +2532,7 @@ const dbController = {
       rate,
       taxableAmount,
       billType,
+      taxTreatment,
       cgstRate,
       cgstAmount,
       sgstRate,
@@ -2316,6 +2545,8 @@ const dbController = {
       tcsRate,
       tcsAmount,
       netAmount,
+      submittedNetAmountIgnored,
+      legacyDisplayNo: data.legacyDisplayNo || undefined,
       status,
       settledBags: 0,
       remainingBags: status === 'storage' ? bags : 0,
@@ -2333,7 +2564,7 @@ const dbController = {
     dbState.arrivals.push(newArrival);
     if (shouldSave) {
       saveLocalDb();
-      if (isMongoConnected && MongoArrival) {
+      if (cloudSyncEnabled() && MongoArrival) {
         MongoArrival.findOneAndUpdate({ id }, newArrival, { upsert: true }).catch(e => console.error(e));
       }
     }
@@ -2392,6 +2623,8 @@ const dbController = {
     let tcsAmount = 0;
     let billAmount = 0;
     let netAmount = 0;
+    let taxTreatment = arr.taxTreatment || 'none';
+    let submittedNetAmountIgnored = arr.submittedNetAmountIgnored || null;
 
     if (arr.status !== 'storage') {
       if (rateUnit === 'per_bag') {
@@ -2402,20 +2635,31 @@ const dbController = {
         taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
       }
 
-      if (billType === 'gst_bill') {
-        if (igstRate > 0) {
-          igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
-        } else {
-          cgstAmount = Math.round((taxableAmount * (cgstRate / 100)) * 100) / 100;
-          sgstAmount = Math.round((taxableAmount * (sgstRate / 100)) * 100) / 100;
-        }
+      if (data.preserveStoredTax === true) {
+        taxableAmount = arr.taxableAmount;
+        cgstAmount = Number(arr.cgstAmount) || 0;
+        sgstAmount = Number(arr.sgstAmount) || 0;
+        igstAmount = Number(arr.igstAmount) || 0;
+        billAmount = Number(arr.billAmount) || 0;
+        tdsAmount = Number(arr.tdsAmount) || 0;
+        tcsAmount = Number(arr.tcsAmount) || 0;
+        netAmount = Number(arr.netAmount) || 0;
+        taxTreatment = arr.taxTreatment || 'none';
+      } else {
+        const tax = authoritativeTax(billType, taxableAmount, data, { cgstRate, sgstRate, igstRate, tdsRate, tcsRate });
+        cgstAmount = tax.cgstAmount;
+        sgstAmount = tax.sgstAmount;
+        igstAmount = tax.igstAmount;
+        cgstRate = tax.cgstRate;
+        sgstRate = tax.sgstRate;
+        igstRate = tax.igstRate;
+        billAmount = tax.billAmount;
+        tdsAmount = tax.tdsAmount;
+        tcsAmount = tax.tcsAmount;
+        netAmount = tax.netAmount;
+        taxTreatment = tax.taxTreatment;
+        submittedNetAmountIgnored = tax.submittedNetAmountIgnored;
       }
-      billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
-
-      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
-
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tdsAmount - tcsAmount) * 100) / 100;
     }
 
     dbState.arrivals[index] = {
@@ -2432,6 +2676,7 @@ const dbController = {
       endProductWeight,
       rate,
       billType,
+      taxTreatment,
       taxableAmount,
       cgstRate,
       cgstAmount,
@@ -2445,6 +2690,7 @@ const dbController = {
       tcsRate,
       tcsAmount,
       netAmount,
+      submittedNetAmountIgnored,
       remainingBags: arr.status === 'storage' ? Math.max(0, bags - (arr.settledBags || 0)) : arr.remainingBags,
       remainingEndProduct: arr.status === 'storage' ? Math.max(0, endProductWeight - (arr.settledEndProduct || 0)) : arr.remainingEndProduct,
       remarks: data.remarks !== undefined ? data.remarks : arr.remarks,
@@ -2452,7 +2698,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoArrival) {
+    if (cloudSyncEnabled() && MongoArrival) {
       MongoArrival.findOneAndUpdate({ id }, dbState.arrivals[index]).catch(e => console.error(e));
     }
     return dbState.arrivals[index];
@@ -2490,7 +2736,7 @@ const dbController = {
 
     dbState.arrivals.splice(index, 1);
     saveLocalDb();
-    if (isMongoConnected && MongoArrival) {
+    if (cloudSyncEnabled() && MongoArrival) {
       MongoArrival.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -2499,56 +2745,28 @@ const dbController = {
   // DISPATCHES (SALES & HUSK DISPATCHES)
   getDispatches(filter = {}) {
     ensureDatabaseReady();
-    let list = (dbState.dispatches || []).slice();
-    if (filter.fy && filter.fy !== 'ALL') {
-      list = list.filter(d => (d.fy || getFinancialYear(d.date)) === filter.fy);
-    }
-    if (filter.supplierId || filter.partyId) {
-      const pid = filter.supplierId || filter.partyId;
-      list = list.filter(d => d.supplierId === pid || d.partyId === pid);
-    }
-    if (filter.dispatchType) {
-      list = list.filter(d => d.dispatchType === filter.dispatchType);
-    }
-    if (filter.product) {
-      list = list.filter(d => d.product === filter.product);
-    }
-    if (filter.status) {
-      list = list.filter(d => d.status === filter.status);
-    }
-    if (filter.startDate) {
-      list = list.filter(d => d.date >= filter.startDate);
-    }
-    if (filter.endDate) {
-      list = list.filter(d => d.date <= filter.endDate);
-    }
-    if (filter.search) {
-      const q = filter.search.toLowerCase();
-      list = list.filter(d =>
-        (d.dispatchNo && d.dispatchNo.toLowerCase().includes(q)) ||
-        (d.supplierName && d.supplierName.toLowerCase().includes(q)) ||
-        (d.product && d.product.toLowerCase().includes(q)) ||
-        (d.vehicleNo && d.vehicleNo.toLowerCase().includes(q))
-      );
-    }
-    list.reverse();
-
-    if (filter.page && filter.limit) {
-      const page = Math.max(1, parseInt(filter.page, 10) || 1);
-      const limit = Math.max(1, parseInt(filter.limit, 10) || 50);
-      const totalCount = list.length;
-      const totalPages = Math.ceil(totalCount / limit);
-      const items = list.slice((page - 1) * limit, page * limit);
-      return {
-        items,
-        totalCount,
-        page,
-        limit,
-        totalPages
-      };
-    }
-
-    return list;
+    const q = filter.search ? String(filter.search).toLowerCase() : '';
+    const pid = filter.supplierId || filter.partyId;
+    return queryNewest(dbState.dispatches || [], (d) => {
+      if (filter.fy && filter.fy !== 'ALL' && (d.fy || getFinancialYear(d.date)) !== filter.fy) return false;
+      if (pid && d.supplierId !== pid && d.partyId !== pid) return false;
+      if (filter.commoditySide === 'primary' && isSecondaryDispatch(d)) return false;
+      if (filter.commoditySide === 'secondary' && !isSecondaryDispatch(d)) return false;
+      if (filter.dispatchType && filter.dispatchType !== 'all' && filter.dispatchType !== 'primary' && filter.dispatchType !== 'secondary' && d.dispatchType !== filter.dispatchType) return false;
+      if (filter.billType && filter.billType !== 'all') {
+        const billOk = d.billType === filter.billType || d.status === filter.billType || (filter.billType === 'storage_out' && (d.rateType === 'storage_out' || d.status === 'storage_out'));
+        if (!billOk) return false;
+      }
+      if (filter.product && filter.product !== 'ALL' && d.product !== filter.product) return false;
+      if (filter.status && d.status !== filter.status) return false;
+      if (filter.startDate && !(d.date >= filter.startDate)) return false;
+      if (filter.endDate && !(d.date <= filter.endDate)) return false;
+      if (q) {
+        const hay = `${d.dispatchNo || ''} ${d.supplierName || ''} ${d.product || ''} ${d.vehicleNo || ''} ${d.legacyDisplayNo || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }, filter, summarizeDispatches);
   },
 
   addDispatch(data, shouldSave = true) {
@@ -2602,7 +2820,15 @@ const dbController = {
     let tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : 0;
     let billAmount = 0;
     let netAmount = 0;
+    let taxTreatment = 'none';
+    let submittedNetAmountIgnored = null;
     let status = 'billed';
+
+    const cuttingKg = data.cuttingKg !== undefined && data.cuttingKg !== '' ? Number(data.cuttingKg) : 0;
+    if (!Number.isFinite(cuttingKg) || cuttingKg < 0) throw new Error('Cutting weight is invalid.');
+    if (cuttingKg > weight + 0.001) throw new Error('Cutting cannot exceed physical weight. Physical weight is retained separately.');
+    const billableWeight = Math.round((weight - cuttingKg) * 100) / 100;
+    const taxableWeight = cuttingKg > 0 && data.applyCuttingToBill === true ? billableWeight : weight;
 
     if (rateType === 'storage_out') {
       status = 'storage_out';
@@ -2613,23 +2839,22 @@ const dbController = {
       } else if (rateUnit === 'per_kg_ep' && calculationBasis === 'end_product') {
         taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
       } else {
-        taxableAmount = Math.round((weight * rate) * 100) / 100;
+        taxableAmount = Math.round((taxableWeight * rate) * 100) / 100;
       }
 
-      if (billType === 'gst_bill') {
-        if (igstRate > 0) {
-          igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
-        } else {
-          cgstAmount = Math.round((taxableAmount * (cgstRate / 100)) * 100) / 100;
-          sgstAmount = Math.round((taxableAmount * (sgstRate / 100)) * 100) / 100;
-        }
-      }
-      billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
-
-      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
-
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tcsAmount - tdsAmount) * 100) / 100;
+      const tax = authoritativeTax(billType, taxableAmount, data, { cgstRate, sgstRate, igstRate, tdsRate, tcsRate });
+      cgstAmount = tax.cgstAmount;
+      sgstAmount = tax.sgstAmount;
+      igstAmount = tax.igstAmount;
+      cgstRate = tax.cgstRate;
+      sgstRate = tax.sgstRate;
+      igstRate = tax.igstRate;
+      billAmount = tax.billAmount;
+      tdsAmount = tax.tdsAmount;
+      tcsAmount = tax.tcsAmount;
+      netAmount = tax.netAmount;
+      taxTreatment = tax.taxTreatment;
+      submittedNetAmountIgnored = tax.submittedNetAmountIgnored;
       status = billType === 'cash_bill' ? 'cash_bill' : 'billed';
     }
 
@@ -2651,6 +2876,7 @@ const dbController = {
       rate,
       taxableAmount,
       billType,
+      taxTreatment,
       cgstRate,
       cgstAmount,
       sgstRate,
@@ -2663,6 +2889,10 @@ const dbController = {
       tcsRate,
       tcsAmount,
       netAmount,
+      submittedNetAmountIgnored,
+      cuttingKg: cuttingKg || undefined,
+      billableWeight: cuttingKg > 0 ? billableWeight : undefined,
+      legacyDisplayNo: data.legacyDisplayNo || undefined,
       status,
       settledBags: 0,
       remainingBags: rateType === 'storage_out' ? bags : 0,
@@ -2680,7 +2910,7 @@ const dbController = {
     dbState.dispatches.push(newDispatch);
     if (shouldSave) {
       saveLocalDb();
-      if (isMongoConnected && MongoDispatch) {
+      if (cloudSyncEnabled() && MongoDispatch) {
         MongoDispatch.findOneAndUpdate({ id }, newDispatch, { upsert: true }).catch(e => console.error(e));
       }
     }
@@ -2721,6 +2951,15 @@ const dbController = {
     let tcsAmount = 0;
     let billAmount = 0;
     let netAmount = 0;
+    let taxTreatment = disp.taxTreatment || 'none';
+    let submittedNetAmountIgnored = disp.submittedNetAmountIgnored || null;
+
+    const cuttingKg = data.cuttingKg !== undefined && data.cuttingKg !== '' ? Number(data.cuttingKg) : (Number(disp.cuttingKg) || 0);
+    if (!Number.isFinite(cuttingKg) || cuttingKg < 0) throw new Error('Cutting weight is invalid.');
+    if (cuttingKg > weight + 0.001) throw new Error('Cutting cannot exceed physical weight. Physical weight is retained separately.');
+    const billableWeight = Math.round((weight - cuttingKg) * 100) / 100;
+    const applyCutting = cuttingKg > 0 && (data.applyCuttingToBill === true || disp.applyCuttingToBill === true);
+    const taxableWeight = applyCutting ? billableWeight : weight;
 
     if (disp.status !== 'storage_out') {
       if (rateUnit === 'per_bag') {
@@ -2728,23 +2967,34 @@ const dbController = {
       } else if (rateUnit === 'per_kg_ep' && calculationBasis === 'end_product') {
         taxableAmount = Math.round((endProductWeight * rate) * 100) / 100;
       } else {
-        taxableAmount = Math.round((weight * rate) * 100) / 100;
+        taxableAmount = Math.round((taxableWeight * rate) * 100) / 100;
       }
 
-      if (billType === 'gst_bill') {
-        if (igstRate > 0) {
-          igstAmount = Math.round((taxableAmount * (igstRate / 100)) * 100) / 100;
-        } else {
-          cgstAmount = Math.round((taxableAmount * (cgstRate / 100)) * 100) / 100;
-          sgstAmount = Math.round((taxableAmount * (sgstRate / 100)) * 100) / 100;
-        }
+      if (data.preserveStoredTax === true) {
+        taxableAmount = disp.taxableAmount;
+        cgstAmount = Number(disp.cgstAmount) || 0;
+        sgstAmount = Number(disp.sgstAmount) || 0;
+        igstAmount = Number(disp.igstAmount) || 0;
+        billAmount = Number(disp.billAmount) || 0;
+        tdsAmount = Number(disp.tdsAmount) || 0;
+        tcsAmount = Number(disp.tcsAmount) || 0;
+        netAmount = Number(disp.netAmount) || 0;
+        taxTreatment = disp.taxTreatment || 'none';
+      } else {
+        const tax = authoritativeTax(billType, taxableAmount, data, { cgstRate, sgstRate, igstRate, tdsRate, tcsRate });
+        cgstAmount = tax.cgstAmount;
+        sgstAmount = tax.sgstAmount;
+        igstAmount = tax.igstAmount;
+        cgstRate = tax.cgstRate;
+        sgstRate = tax.sgstRate;
+        igstRate = tax.igstRate;
+        billAmount = tax.billAmount;
+        tdsAmount = tax.tdsAmount;
+        tcsAmount = tax.tcsAmount;
+        netAmount = tax.netAmount;
+        taxTreatment = tax.taxTreatment;
+        submittedNetAmountIgnored = tax.submittedNetAmountIgnored;
       }
-      billAmount = Math.round((taxableAmount + cgstAmount + sgstAmount + igstAmount) * 100) / 100;
-
-      tdsAmount = data.tdsAmount !== undefined ? Number(data.tdsAmount) : Math.round((taxableAmount * (tdsRate / 100)) * 100) / 100;
-      tcsAmount = data.tcsAmount !== undefined ? Number(data.tcsAmount) : Math.round((taxableAmount * (tcsRate / 100)) * 100) / 100;
-
-      netAmount = data.netAmount !== undefined ? Number(data.netAmount) : Math.round((billAmount - tcsAmount - tdsAmount) * 100) / 100;
     }
 
     dbState.dispatches[index] = {
@@ -2762,6 +3012,7 @@ const dbController = {
       endProductWeight,
       rate,
       billType,
+      taxTreatment,
       taxableAmount,
       cgstRate,
       cgstAmount,
@@ -2775,6 +3026,10 @@ const dbController = {
       tcsRate,
       tcsAmount,
       netAmount,
+      submittedNetAmountIgnored,
+      cuttingKg: cuttingKg || disp.cuttingKg,
+      billableWeight: cuttingKg > 0 ? billableWeight : disp.billableWeight,
+      applyCuttingToBill: applyCutting || undefined,
       remainingBags: disp.status === 'storage_out' ? Math.max(0, bags - (disp.settledBags || 0)) : disp.remainingBags,
       remainingEndProduct: disp.status === 'storage_out' ? Math.max(0, endProductWeight - (disp.settledEndProduct || 0)) : disp.remainingEndProduct,
       remarks: data.remarks !== undefined ? data.remarks : disp.remarks,
@@ -2782,7 +3037,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoDispatch) {
+    if (cloudSyncEnabled() && MongoDispatch) {
       MongoDispatch.findOneAndUpdate({ id }, dbState.dispatches[index]).catch(e => console.error(e));
     }
     return dbState.dispatches[index];
@@ -2816,7 +3071,7 @@ const dbController = {
 
     dbState.dispatches.splice(index, 1);
     saveLocalDb();
-    if (isMongoConnected && MongoDispatch) {
+    if (cloudSyncEnabled() && MongoDispatch) {
       MongoDispatch.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -2832,8 +3087,9 @@ const dbController = {
     return list.slice().reverse();
   },
 
-  addEpTransfer(data) {
+  addEpTransfer(data, options = {}) {
     ensureDatabaseReady();
+    const shouldSave = options === false ? false : (options.shouldSave !== false);
     const fromParty = dbState.suppliers.find(s => s.id === data.fromPartyId);
     const toParty = dbState.suppliers.find(s => s.id === data.toPartyId);
 
@@ -2841,34 +3097,64 @@ const dbController = {
     if (!toParty) throw new Error('Destination party not found');
     if (data.fromPartyId === data.toPartyId) throw new Error('Source and destination parties must be different.');
 
-    const transferType = data.transferType || 'store_in'; // 'store_in' or 'store_out'
+    const transferType = data.transferType || 'store_in';
     const product = data.product || 'RC EP';
-    const bags = Number(data.bags) || 0;
-    const weight = Number(data.weight) || (bags * 50);
-    const endProductWeight = Number(data.endProductWeight) || weight;
-    const rate = Number(data.rate) || 0;
-    const transferValue = Math.round((endProductWeight * rate) * 100) / 100;
+    const qty = resolveTransferQuantities(data);
+    const moneyMovement = data.moneyMovement === true;
+    const rate = moneyMovement ? (Number(data.rate) || 0) : 0;
+    const transferValue = moneyMovement ? roundQty(qty.endProductWeight * rate) : 0;
 
-    // Strict Quantity Verification on Source Party Stock
-    let availableEP = 0;
-    if (transferType === 'store_in') {
-      const openEP = (fromParty.openingStorageEP || 0);
-      const arrEP = (dbState.arrivals || []).filter(a => a.supplierId === data.fromPartyId && a.product === product && (a.status === 'storage' || a.status === 'partial_settled'))
-        .reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0)), 0);
-      availableEP = openEP + arrEP;
-    } else {
-      const dispEP = (dbState.dispatches || []).filter(d => (d.supplierId === data.fromPartyId || d.partyId === data.fromPartyId) && d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'))
-        .reduce((sum, d) => sum + Number(d.endProductWeight || d.weight || 0), 0);
-      availableEP = dispEP;
+    const legacy = recognizeLegacyManualEpMove({
+      fromPartyId: data.fromPartyId,
+      toPartyId: data.toPartyId,
+      endProductWeight: qty.endProductWeight,
+      remarkNeedle: data.remarkNeedle || data.notes || ''
+    });
+    if (legacy.recognized) {
+      const err = new Error('A legacy manual EP move for this party pair and quantity is already on the books. It will not be reposted or repaired automatically.');
+      err.code = 'LEGACY_MANUAL_TRANSFER';
+      err.legacy = legacy;
+      throw err;
     }
 
-    if (endProductWeight > availableEP + 0.001) {
-      throw new Error(`Insufficient Storage Stock: Party '${fromParty.name}' has only ${(Math.round(availableEP * 100) / 100).toLocaleString()} kg EP of '${product}' available in ${transferType === 'store_in' ? 'Store-In' : 'Store-Out'} storage. Requested ${endProductWeight.toLocaleString()} kg EP exceeds available balance.`);
+    const lots = collectSourceLots(data.fromPartyId, product, transferType);
+    const openingEp = transferType === 'store_in' ? (Number(fromParty.openingStorageEP) || 0) : 0;
+    const legacyOut = transferType === 'store_in' ? legacyTransferOutEp(data.fromPartyId, product) : 0;
+    const planLots = lots.slice();
+    if (openingEp > 0) {
+      planLots.push({
+        id: 'opening',
+        kind: 'opening',
+        date: '0000-00-00',
+        createdAt: '',
+        remainingEndProduct: openingEp,
+        remainingBags: Number(fromParty.openingStorageBags) || 0,
+        settledEndProduct: 0,
+        settlementIds: []
+      });
+    }
+    const available = roundQty(planLots.reduce((s, l) => s + (Number(l.remainingEndProduct) || 0), 0) - legacyOut);
+    if (qty.endProductWeight > available + 0.02) {
+      throw new Error(`Insufficient Storage Stock: Party '${fromParty.name}' has only ${available.toLocaleString()} kg EP of '${product}' available in ${transferType === 'store_in' ? 'Store-In' : 'Store-Out'} storage. Requested ${qty.endProductWeight.toLocaleString()} kg EP exceeds available balance.`);
     }
 
-    const id = 'trf_' + Date.now();
-    const count = (dbState.epTransfers || []).length + 1;
-    const transferNo = 'TRF-' + String(count).padStart(4, '0');
+    const plan = planAllocations(planLots, qty.endProductWeight, qty.bags, data.lotIds);
+    if (!plan.ok) {
+      throw new Error(`Insufficient lot quantity for '${product}'. Shortfall ${plan.shortfallEp} kg EP.`);
+    }
+
+    const seq = nextMonotonic('epTransfer');
+    const id = 'trf_' + seq + '_' + Math.random().toString(36).substring(2, 7);
+    const transferNo = 'TRF-' + String(seq).padStart(4, '0');
+
+    for (const allocation of plan.allocations) {
+      if (allocation.lotKind === 'opening') {
+        fromParty.openingStorageEP = roundQty(Math.max(0, (Number(fromParty.openingStorageEP) || 0) - allocation.endProduct));
+        fromParty.openingStorageBags = roundQty(Math.max(0, (Number(fromParty.openingStorageBags) || 0) - allocation.bags));
+      } else {
+        applyAllocation(allocation, 1);
+      }
+    }
 
     const newTransfer = {
       id,
@@ -2880,11 +3166,14 @@ const dbController = {
       toPartyName: toParty.name,
       transferType,
       product,
-      bags,
-      weight,
-      endProductWeight,
+      bags: qty.bags,
+      weight: qty.weight,
+      endProductWeight: qty.endProductWeight,
+      weightDefaultedToEp: qty.weightDefaultedToEp,
       rate,
       transferValue,
+      moneyMovement,
+      allocations: plan.allocations,
       notes: data.notes || '',
       updatedAt: Date.now(),
       createdAt: new Date().toISOString()
@@ -2893,62 +3182,51 @@ const dbController = {
     if (!dbState.epTransfers) dbState.epTransfers = [];
     dbState.epTransfers.push(newTransfer);
 
-    // 1. Post Storage Out Dispatch Entry for Source Party (Deduction)
-    const dispatchId = 'disp_trf_' + Date.now();
-    const sourceDispatch = {
-      id: dispatchId,
-      dispatchNo: 'DISP-TRF-' + String((dbState.dispatches || []).length + 1).padStart(4, '0'),
-      date: newTransfer.date,
-      supplierId: data.fromPartyId,
-      supplierName: fromParty.name,
-      partyId: data.fromPartyId,
-      partyName: fromParty.name,
-      product,
-      bags,
-      weight,
-      endProductWeight,
-      rate,
-      billAmount: transferValue,
-      netAmount: transferValue,
-      dispatchType: 'storage_out',
-      status: 'storage_out',
-      rateType: 'storage_out',
-      notes: `EP Transfer Outward to ${toParty.name} (${transferNo})${data.notes ? ' | ' + data.notes : ''}`,
-      transferId: id,
-      createdAt: new Date().toISOString()
-    };
-    if (!dbState.dispatches) dbState.dispatches = [];
-    dbState.dispatches.unshift(sourceDispatch);
-
-    // 2. Post Storage Inward Arrival Entry for Destination Party (Addition - Settleable/Billable Later)
-    const arrivalId = 'arr_trf_' + Date.now();
+    const arrivalSeq = nextMonotonic('transferArrival');
+    const arrivalId = 'arr_trf_' + arrivalSeq + '_' + Math.random().toString(36).substring(2, 6);
     const destArrival = {
       id: arrivalId,
-      arrivalNo: 'ARR-TRF-' + String((dbState.arrivals || []).length + 1).padStart(4, '0'),
+      arrivalNo: 'ARR-TRF-' + String(arrivalSeq).padStart(4, '0'),
       date: newTransfer.date,
       supplierId: data.toPartyId,
       supplierName: toParty.name,
       product,
-      bags,
-      weight,
-      endProductWeight,
-      remainingBags: bags,
-      remainingEndProduct: endProductWeight,
-      rate,
+      bags: qty.bags,
+      weight: qty.weight,
+      endProductWeight: qty.endProductWeight,
+      remainingBags: qty.bags,
+      remainingEndProduct: qty.endProductWeight,
+      settledBags: 0,
+      settledEndProduct: 0,
+      settlementIds: [],
+      rate: 0,
       rateType: 'storage',
       status: 'storage',
+      billType: 'gst_bill',
+      taxableAmount: 0,
+      billAmount: 0,
+      netAmount: 0,
+      cgstAmount: 0,
+      sgstAmount: 0,
+      igstAmount: 0,
+      tdsAmount: 0,
+      tcsAmount: 0,
+      calculationBasis: 'end_product',
       notes: `EP Transfer Inward from ${fromParty.name} (${transferNo})${data.notes ? ' | ' + data.notes : ''}`,
       transferId: id,
+      updatedAt: Date.now(),
       createdAt: new Date().toISOString()
     };
     if (!dbState.arrivals) dbState.arrivals = [];
-    dbState.arrivals.unshift(destArrival);
+    dbState.arrivals.push(destArrival);
+    newTransfer.destArrivalId = arrivalId;
 
-    saveLocalDb();
-    if (isMongoConnected && MongoEpTransfer) {
-      MongoEpTransfer.findOneAndUpdate({ id }, newTransfer, { upsert: true }).catch(e => console.error(e));
-      MongoDispatch.findOneAndUpdate({ id: dispatchId }, sourceDispatch, { upsert: true }).catch(e => console.error(e));
-      MongoArrival.findOneAndUpdate({ id: arrivalId }, destArrival, { upsert: true }).catch(e => console.error(e));
+    if (shouldSave) {
+      saveLocalDb();
+      if (cloudSyncEnabled() && MongoEpTransfer) {
+        MongoEpTransfer.findOneAndUpdate({ id }, newTransfer, { upsert: true }).catch(e => console.error(e));
+        if (MongoArrival) MongoArrival.findOneAndUpdate({ id: arrivalId }, destArrival, { upsert: true }).catch(e => console.error(e));
+      }
     }
     return newTransfer;
   },
@@ -2956,19 +3234,59 @@ const dbController = {
   deleteEpTransfer(id) {
     const index = (dbState.epTransfers || []).findIndex(t => t.id === id);
     if (index === -1) return { success: true };
+    const trf = dbState.epTransfers[index];
 
-    // Also remove associated dispatch and arrival entries created for this transfer
+    const linkedArrivals = (dbState.arrivals || []).filter(a => a.transferId === id);
+    const linkedDispatches = (dbState.dispatches || []).filter(d => d.transferId === id);
+    const blocked = [];
+    for (const doc of linkedArrivals.concat(linkedDispatches)) {
+      const settled = (Array.isArray(doc.settlementIds) && doc.settlementIds.length > 0) || (Number(doc.settledEndProduct) > 0) || (Number(doc.settledBags) > 0) || doc.status === 'billed' || doc.status === 'settled' || doc.status === 'partial_settled';
+      if (settled) blocked.push(doc.arrivalNo || doc.dispatchNo || doc.id);
+    }
+    if (Array.isArray(trf.allocations)) {
+      for (const allocation of trf.allocations) {
+        if (allocation.lotKind === 'opening') continue;
+        const rec = allocation.lotKind === 'arrival'
+          ? (dbState.arrivals || []).find(a => a.id === allocation.lotId)
+          : (dbState.dispatches || []).find(d => d.id === allocation.lotId);
+        if (!rec) {
+          blocked.push(allocation.lotId);
+          continue;
+        }
+        const settlementsNow = Array.isArray(rec.settlementIds) ? rec.settlementIds.length : 0;
+        if (Math.abs((Number(rec.settledEndProduct) || 0) - (Number(allocation.settledEndProductAtTransfer) || 0)) > 0.001 || settlementsNow !== (allocation.settlementCountAtTransfer || 0)) {
+          blocked.push(rec.arrivalNo || rec.dispatchNo || rec.id);
+        }
+      }
+    }
+    if (blocked.length) {
+      throw new Error(`Cannot delete transfer ${trf.transferNo}: later settlement or billing is on ${blocked.join(', ')}. Reverse that first. No records were changed.`);
+    }
+
+    if (Array.isArray(trf.allocations)) {
+      for (const allocation of trf.allocations) {
+        if (allocation.lotKind === 'opening') {
+          const party = dbState.suppliers.find(s => s.id === trf.fromPartyId);
+          if (party) {
+            party.openingStorageEP = roundQty((Number(party.openingStorageEP) || 0) + (Number(allocation.endProduct) || 0));
+            party.openingStorageBags = roundQty((Number(party.openingStorageBags) || 0) + (Number(allocation.bags) || 0));
+          }
+        } else {
+          applyAllocation(allocation, -1);
+        }
+      }
+    }
+
     dbState.dispatches = (dbState.dispatches || []).filter(d => d.transferId !== id);
     dbState.arrivals = (dbState.arrivals || []).filter(a => a.transferId !== id);
-
     dbState.epTransfers.splice(index, 1);
     saveLocalDb();
-    if (isMongoConnected && MongoEpTransfer) {
+    if (cloudSyncEnabled() && MongoEpTransfer) {
       MongoEpTransfer.deleteOne({ id }).catch(e => console.error(e));
       MongoDispatch.deleteMany({ transferId: id }).catch(e => console.error(e));
       MongoArrival.deleteMany({ transferId: id }).catch(e => console.error(e));
     }
-    return { success: true };
+    return { success: true, restoredAllocations: (trf.allocations || []).length };
   },
 
   // SETTLEMENT OF STORAGE COFFEE (PURCHASES & SALES)
@@ -3128,16 +3446,27 @@ const dbController = {
     }
     settlementGrossAmount = Math.round(settlementGrossAmount * 100) / 100;
 
-    const numCgstRate = Number(cgstRate) || 0;
-    const numSgstRate = Number(sgstRate) || 0;
-    const numIgstRate = Number(igstRate) || 0;
-    const cgstAmount = Math.round((settlementGrossAmount * (numCgstRate / 100)) * 100) / 100;
-    const sgstAmount = Math.round((settlementGrossAmount * (numSgstRate / 100)) * 100) / 100;
-    const igstAmount = Math.round((settlementGrossAmount * (numIgstRate / 100)) * 100) / 100;
-
-    const tdsAmount = Math.round((settlementGrossAmount * (Number(tdsRate) / 100)) * 100) / 100;
-    const tcsAmount = Math.round((settlementGrossAmount * (Number(tcsRate) / 100)) * 100) / 100;
-    const settlementNetAmount = Math.round((settlementGrossAmount + cgstAmount + sgstAmount + igstAmount - tdsAmount - tcsAmount) * 100) / 100;
+    const settlementTax = computeDocumentTax({
+      billType: 'gst_bill',
+      taxableAmount: settlementGrossAmount,
+      taxTreatment: settleData.taxTreatment,
+      cgstRate,
+      sgstRate,
+      igstRate,
+      tdsRate,
+      tcsRate,
+      tdsAmount: settleData.tdsAmount,
+      tcsAmount: settleData.tcsAmount
+    });
+    const numCgstRate = settlementTax.cgstRate;
+    const numSgstRate = settlementTax.sgstRate;
+    const numIgstRate = settlementTax.igstRate;
+    const cgstAmount = settlementTax.cgstAmount;
+    const sgstAmount = settlementTax.sgstAmount;
+    const igstAmount = settlementTax.igstAmount;
+    const tdsAmount = settlementTax.tdsAmount;
+    const tcsAmount = settlementTax.tcsAmount;
+    const settlementNetAmount = settlementTax.netAmount;
 
     const id = 'set_' + Date.now();
     const count = dbState.settlements.length + 1;
@@ -3233,7 +3562,7 @@ const dbController = {
           remainingQty: newRem,
           status: newRem <= 0.001 ? 'completed' : 'active'
         };
-        if (isMongoConnected && MongoCommitment) {
+        if (cloudSyncEnabled() && MongoCommitment) {
           MongoCommitment.findOneAndUpdate({ id: commitmentId }, dbState.commitments[comIndex]).catch(e => console.error(e));
         }
       }
@@ -3267,6 +3596,7 @@ const dbController = {
       settlementRate,
       rateUnit,
       settlementGrossAmount,
+      taxTreatment: settlementTax.taxTreatment,
       cgstRate: numCgstRate,
       cgstAmount,
       sgstRate: numSgstRate,
@@ -3287,7 +3617,7 @@ const dbController = {
 
     dbState.settlements.push(newSettlement);
     saveLocalDb();
-    if (isMongoConnected && MongoSettlement) {
+    if (cloudSyncEnabled() && MongoSettlement) {
       MongoSettlement.findOneAndUpdate({ id }, newSettlement, { upsert: true }).catch(e => console.error(e));
     }
     return newSettlement;
@@ -3393,7 +3723,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoSettlement) {
+    if (cloudSyncEnabled() && MongoSettlement) {
       MongoSettlement.findOneAndUpdate({ id }, dbState.settlements[index]).catch(e => console.error(e));
     }
     return dbState.settlements[index];
@@ -3473,7 +3803,7 @@ const dbController = {
           remainingQty: newRem,
           status: newRem > 0.001 ? 'active' : 'completed'
         };
-        if (isMongoConnected && MongoCommitment) {
+        if (cloudSyncEnabled() && MongoCommitment) {
           MongoCommitment.findOneAndUpdate({ id: st.commitmentId }, dbState.commitments[comIndex]).catch(e => console.error(e));
         }
       }
@@ -3481,7 +3811,7 @@ const dbController = {
 
     dbState.settlements.splice(index, 1);
     saveLocalDb();
-    if (isMongoConnected && MongoSettlement) {
+    if (cloudSyncEnabled() && MongoSettlement) {
       MongoSettlement.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -3568,7 +3898,7 @@ const dbController = {
     dbState.payments.push(newPayment);
     if (shouldSave) {
       saveLocalDb();
-      if (isMongoConnected && MongoPayment) {
+      if (cloudSyncEnabled() && MongoPayment) {
         MongoPayment.findOneAndUpdate({ id }, newPayment, { upsert: true }).catch(e => console.error(e));
       }
     }
@@ -3598,7 +3928,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoPayment) {
+    if (cloudSyncEnabled() && MongoPayment) {
       MongoPayment.findOneAndUpdate({ id }, dbState.payments[index]).catch(e => console.error(e));
     }
     return dbState.payments[index];
@@ -3612,7 +3942,7 @@ const dbController = {
 
     dbState.payments = dbState.payments.filter(p => p.id !== id);
     saveLocalDb();
-    if (isMongoConnected && MongoPayment) {
+    if (cloudSyncEnabled() && MongoPayment) {
       MongoPayment.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -3661,7 +3991,7 @@ const dbController = {
     dbState.partyBills.push(newBill);
     if (shouldSave) {
       saveLocalDb();
-      if (isMongoConnected && MongoPartyBill) {
+      if (cloudSyncEnabled() && MongoPartyBill) {
         MongoPartyBill.findOneAndUpdate({ id }, newBill, { upsert: true }).catch(e => console.error(e));
       }
     }
@@ -3699,7 +4029,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoPartyBill) {
+    if (cloudSyncEnabled() && MongoPartyBill) {
       MongoPartyBill.findOneAndUpdate({ id }, dbState.partyBills[index]).catch(e => console.error(e));
     }
     return dbState.partyBills[index];
@@ -3713,7 +4043,7 @@ const dbController = {
     }
     dbState.partyBills = dbState.partyBills.filter(b => b.id !== id);
     saveLocalDb();
-    if (isMongoConnected && MongoPartyBill) {
+    if (cloudSyncEnabled() && MongoPartyBill) {
       MongoPartyBill.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -3756,7 +4086,7 @@ const dbController = {
     dbState.balanceAdjustments.push(newAdj);
     if (shouldSave) {
       saveLocalDb();
-      if (isMongoConnected && MongoBalanceAdjustment) {
+      if (cloudSyncEnabled() && MongoBalanceAdjustment) {
         MongoBalanceAdjustment.findOneAndUpdate({ id }, newAdj, { upsert: true }).catch(e => console.error(e));
       }
     }
@@ -3786,7 +4116,7 @@ const dbController = {
     };
 
     saveLocalDb();
-    if (isMongoConnected && MongoBalanceAdjustment) {
+    if (cloudSyncEnabled() && MongoBalanceAdjustment) {
       MongoBalanceAdjustment.findOneAndUpdate({ id }, dbState.balanceAdjustments[index]).catch(e => console.error(e));
     }
     return dbState.balanceAdjustments[index];
@@ -3800,7 +4130,7 @@ const dbController = {
     }
     dbState.balanceAdjustments = dbState.balanceAdjustments.filter(a => a.id !== id);
     saveLocalDb();
-    if (isMongoConnected && MongoBalanceAdjustment) {
+    if (cloudSyncEnabled() && MongoBalanceAdjustment) {
       MongoBalanceAdjustment.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -4205,7 +4535,7 @@ const dbController = {
     if (!dbState.millingLogs) dbState.millingLogs = [];
     dbState.millingLogs.unshift(record);
     saveLocalDb();
-    if (isMongoConnected && MongoMillingLog) {
+    if (cloudSyncEnabled() && MongoMillingLog) {
       MongoMillingLog.findOneAndUpdate({ id: record.id }, record, { upsert: true }).catch(e => console.error(e));
     }
     return record;
@@ -4219,7 +4549,7 @@ const dbController = {
 
     dbState.millingLogs = (dbState.millingLogs || []).filter(m => m.id !== id);
     saveLocalDb();
-    if (isMongoConnected && MongoMillingLog) {
+    if (cloudSyncEnabled() && MongoMillingLog) {
       MongoMillingLog.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -4243,7 +4573,7 @@ const dbController = {
     }
     dbState.settings.processingProfiles[sourceProduct] = outputs;
     saveLocalDb();
-    if (isMongoConnected && MongoProcessingProfile) {
+    if (cloudSyncEnabled() && MongoProcessingProfile) {
       try {
         await MongoProcessingProfile.findOneAndUpdate(
           { id: sourceProduct },
@@ -4263,7 +4593,7 @@ const dbController = {
       delete dbState.settings.processingProfiles[sourceProduct];
     }
     saveLocalDb();
-    if (isMongoConnected && MongoProcessingProfile) {
+    if (cloudSyncEnabled() && MongoProcessingProfile) {
       try {
         await MongoProcessingProfile.deleteOne({ id: sourceProduct });
       } catch (e) {
@@ -4310,7 +4640,7 @@ const dbController = {
     }
 
     saveLocalDb();
-    if (isMongoConnected && MongoOpeningStockEntry) {
+    if (cloudSyncEnabled() && MongoOpeningStockEntry) {
       MongoOpeningStockEntry.findOneAndUpdate({ id: record.id }, record, { upsert: true }).catch(e => console.error(e));
     }
     return record;
@@ -4319,7 +4649,7 @@ const dbController = {
   deleteOpeningStockEntry(id) {
     dbState.openingStockEntries = (dbState.openingStockEntries || []).filter(e => e.id !== id);
     saveLocalDb();
-    if (isMongoConnected && MongoOpeningStockEntry) {
+    if (cloudSyncEnabled() && MongoOpeningStockEntry) {
       MongoOpeningStockEntry.deleteOne({ id }).catch(e => console.error(e));
     }
     return { success: true };
@@ -4615,9 +4945,9 @@ const dbController = {
 
   // GLOBAL DASHBOARD METRICS
   getDashboardMetrics(dateFilter = {}) {
-    let arrivals = (dbState.arrivals || []).slice();
-    let dispatches = (dbState.dispatches || []).slice();
-    let settlements = (dbState.settlements || []).slice();
+    let arrivals = dbState.arrivals || [];
+    let dispatches = dbState.dispatches || [];
+    let settlements = dbState.settlements || [];
 
     if (dateFilter.startDate) {
       arrivals = arrivals.filter(a => a.date >= dateFilter.startDate);
@@ -4978,7 +5308,7 @@ const dbController = {
       created.push(arr);
     }
     saveLocalDb();
-    if (isMongoConnected && MongoArrival && created.length > 0) {
+    if (cloudSyncEnabled() && MongoArrival && created.length > 0) {
       MongoArrival.insertMany(created, { ordered: false }).catch(e => console.error('Mongo bulk arrivals error:', e));
     }
     return { success: true, count: created.length, items: created };
@@ -4993,7 +5323,7 @@ const dbController = {
       created.push(disp);
     }
     saveLocalDb();
-    if (isMongoConnected && MongoDispatch && created.length > 0) {
+    if (cloudSyncEnabled() && MongoDispatch && created.length > 0) {
       MongoDispatch.insertMany(created, { ordered: false }).catch(e => console.error('Mongo bulk dispatches error:', e));
     }
     return { success: true, count: created.length, items: created };
@@ -5008,7 +5338,7 @@ const dbController = {
       created.push(sup);
     }
     saveLocalDb();
-    if (isMongoConnected && MongoSupplier && created.length > 0) {
+    if (cloudSyncEnabled() && MongoSupplier && created.length > 0) {
       MongoSupplier.insertMany(created, { ordered: false }).catch(e => console.error('Mongo bulk suppliers error:', e));
     }
     return { success: true, count: created.length, items: created };
@@ -5023,7 +5353,7 @@ const dbController = {
       created.push(pay);
     }
     saveLocalDb();
-    if (isMongoConnected && MongoPayment && created.length > 0) {
+    if (cloudSyncEnabled() && MongoPayment && created.length > 0) {
       MongoPayment.insertMany(created, { ordered: false }).catch(e => console.error('Mongo bulk payments error:', e));
     }
     return { success: true, count: created.length, items: created };
@@ -5095,7 +5425,7 @@ const dbController = {
         sup.openingStorageBags = Math.max(0, ledger.storageBags || 0);
         sup.openingStorageEP = Math.max(0, ledger.storageEndProduct || 0);
         updatedSuppliers.push({ id: sup.id, name: sup.name, netPayable: ledger.netPayable });
-        if (isMongoConnected && MongoSupplier) {
+        if (cloudSyncEnabled() && MongoSupplier) {
           MongoSupplier.findOneAndUpdate({ id: sup.id }, sup, { upsert: true }).catch(e => console.error(e));
         }
       }
@@ -5167,7 +5497,7 @@ const dbController = {
     }
 
     saveLocalDb({ immediate: true });
-    if (isMongoConnected) {
+    if (cloudSyncEnabled()) {
       await syncWithMongo();
     }
 
@@ -5203,7 +5533,7 @@ const dbController = {
     }
 
     saveLocalDb({ immediate: true });
-    if (isMongoConnected) {
+    if (cloudSyncEnabled()) {
       await syncWithMongo();
     }
     return { success: true, reopenedFy: fyToReopen };
@@ -5260,12 +5590,56 @@ const dbController = {
       closedFiscalYears: closedList,
       years
     };
+  },
+
+  flushLocalNow() {
+    saveLocalDb({ immediate: true });
+    return { saved: true, file: localDbFile, waitedForNetwork: false };
+  },
+
+  resetIsolated(dir) {
+    if (!dir) throw new Error('Isolated data directory is required.');
+    dataDir = dir;
+    localDbFile = path.join(dir, 'commodity_store.json');
+    oldDbFile = path.join(dir, 'coffee_store.json');
+    backupsDir = path.join(dir, 'backups');
+    archivesDir = path.join(dir, 'archives');
+    ensureStorageDirs();
+    const fresh = blankState();
+    for (const key of Object.keys(dbState)) delete dbState[key];
+    Object.assign(dbState, fresh);
+    isMongoConnected = false;
+    mongoError = null;
+    cloudSuspendDepth = 0;
+    rebuildProductIndices();
+    return { dataDir, localDbFile };
+  },
+
+  findLegacyManualEpMove(query) {
+    return recognizeLegacyManualEpMove(query || {});
+  },
+
+  suspendCloudSync(fn) {
+    cloudSuspendDepth += 1;
+    try {
+      return fn();
+    } finally {
+      cloudSuspendDepth -= 1;
+    }
   }
 };
 
-// Initial setup
-loadLocalDb();
-initMongo().catch(e => console.error('MongoDB init error:', e));
+// Initial setup. Node tests and scripts do not open Mongo and must set COMMODITY_DATA_DIR
+// before require so this does not touch the app JSON store.
+if (process.env.COMMODITY_NO_AUTOINIT === '1') {
+  rebuildProductIndices();
+} else {
+  loadLocalDb();
+}
+const runningInsideElectron = !!(process.versions && process.versions.electron);
+if (runningInsideElectron && process.env.COMMODITY_SKIP_MONGO !== '1') {
+  initMongo().catch(e => console.error('MongoDB init error:', e));
+}
 
 module.exports = {
   dbController,

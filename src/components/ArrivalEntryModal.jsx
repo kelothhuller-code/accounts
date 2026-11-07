@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Check, Plus, AlertCircle, Edit2 } from 'lucide-react';
 import { dbAction } from '../utils/api';
+import gst from '../../shared/gst.cjs';
 import SearchableSupplierSelect from './SearchableSupplierSelect';
 import SearchableProductSelect from './SearchableProductSelect';
 
@@ -47,6 +48,7 @@ export default function ArrivalEntryModal({
   const [cgstRate, setCgstRate] = useState(0);
   const [sgstRate, setSgstRate] = useState(0);
   const [igstRate, setIgstRate] = useState(0);
+  const [taxTreatment, setTaxTreatment] = useState('intra');
   const [tcsRate, setTcsRate] = useState(0);
   const [tdsRate, setTdsRate] = useState(0.1);
   const [remarks, setRemarks] = useState('');
@@ -77,6 +79,7 @@ export default function ArrivalEntryModal({
     setCgstRate(arr.cgstRate !== undefined ? arr.cgstRate : (isHusk ? 2.5 : 0));
     setSgstRate(arr.sgstRate !== undefined ? arr.sgstRate : (isHusk ? 2.5 : 0));
     setIgstRate(arr.igstRate !== undefined ? arr.igstRate : 0);
+    setTaxTreatment(gst.inferTaxTreatmentFromStoredAmounts(arr));
     setTdsRate(arr.tdsRate !== undefined && arr.tdsRate !== 0 ? arr.tdsRate : (arr.tcsRate !== undefined && arr.tcsRate !== 0 ? arr.tcsRate : 0.1));
     setTcsRate(arr.tcsRate !== undefined && arr.tdsRate !== undefined && arr.tdsRate !== 0 ? arr.tcsRate : 0);
     setRemarks(arr.remarks || '');
@@ -199,15 +202,24 @@ export default function ArrivalEntryModal({
     }
   }
 
-  let calcCgst = Math.round((taxableAmount * (numCgst / 100)) * 100) / 100;
-  let calcSgst = Math.round((taxableAmount * (numSgst / 100)) * 100) / 100;
-  let calcIgst = Math.round((taxableAmount * (numIgst / 100)) * 100) / 100;
-  let calcGstTotal = calcCgst + calcSgst + calcIgst;
-  let billAmount = Math.round((taxableAmount + calcGstTotal) * 100) / 100;
-
-  let tcsAmount = Math.round((taxableAmount * (numTcs / 100)) * 100) / 100;
-  let tdsAmount = Math.round((taxableAmount * (numTds / 100)) * 100) / 100;
-  let netAmount = Math.round((billAmount - tdsAmount - tcsAmount) * 100) / 100;
+  const previewTax = gst.computeDocumentTax({
+    billType,
+    taxableAmount,
+    taxTreatment: billType === 'gst_bill' ? taxTreatment : 'none',
+    cgstRate: numCgst,
+    sgstRate: numSgst,
+    igstRate: numIgst,
+    tdsRate: numTds,
+    tcsRate: numTcs
+  });
+  const calcCgst = previewTax.cgstAmount;
+  const calcSgst = previewTax.sgstAmount;
+  const calcIgst = previewTax.igstAmount;
+  const calcGstTotal = previewTax.gstTotal;
+  const billAmount = previewTax.billAmount;
+  const tcsAmount = previewTax.tcsAmount;
+  const tdsAmount = previewTax.tdsAmount;
+  const netAmount = previewTax.netAmount;
 
   const handleCommitmentSelect = (cId) => {
     setCommitmentId(cId);
@@ -279,6 +291,7 @@ export default function ArrivalEntryModal({
       rateUnit,
       rate: rateType === 'storage' ? 0 : numRate,
       billType,
+      taxTreatment: billType === 'gst_bill' ? taxTreatment : 'none',
       cgstRate: numCgst,
       cgstAmount: calcCgst,
       sgstRate: numSgst,
@@ -474,6 +487,8 @@ export default function ArrivalEntryModal({
                   if (pObj.cgstRate !== undefined) setCgstRate(pObj.cgstRate);
                   if (pObj.sgstRate !== undefined) setSgstRate(pObj.sgstRate);
                   if (pObj.igstRate !== undefined) setIgstRate(pObj.igstRate);
+                  else setIgstRate((Number(pObj.cgstRate) || 0) + (Number(pObj.sgstRate) || 0));
+                  setTaxTreatment('intra');
                   if (pObj.calculationBasis === 'end_product' && pObj.defaultOutturn) {
                     setOutturn(String(pObj.defaultOutturn));
                     if (pObj.defaultOutturnType) setOutturnType(pObj.defaultOutturnType);
@@ -727,9 +742,15 @@ export default function ArrivalEntryModal({
                   </div>
                 </div>
 
-                {/* Tax Breakdown Grid (CGST, SGST, TCS & TDS) */}
                 <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px dashed #cbd5e1' }}>
                   {billType === 'gst_bill' ? (
+                    <>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.55rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span className="form-label" style={{ marginBottom: 0 }}>GST treatment</span>
+                      <button type="button" className="btn btn-sm" onClick={() => setTaxTreatment('intra')} style={{ background: taxTreatment === 'intra' ? '#dbeafe' : '#fff' }}>Intra-state CGST+SGST</button>
+                      <button type="button" className="btn btn-sm" onClick={() => setTaxTreatment('inter')} style={{ background: taxTreatment === 'inter' ? '#dbeafe' : '#fff' }}>Inter-state IGST</button>
+                      <small style={{ color: '#64748b' }}>{taxTreatment === 'intra' ? 'IGST is not added to CGST and SGST' : 'CGST and SGST are not added to IGST'}</small>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.75rem' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label className="form-label" style={{ fontSize: '0.8rem' }}>CGST %</label>
@@ -762,6 +783,7 @@ export default function ArrivalEntryModal({
                         />
                       </div>
                     </div>
+                    </>
                   ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxWidth: '360px' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>

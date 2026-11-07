@@ -21,6 +21,9 @@ export default function EPTransferModal({
   const [weight, setWeight] = useState('');
   const [endProductWeight, setEndProductWeight] = useState('');
   const [rate, setRate] = useState('0');
+  const [moneyMovement, setMoneyMovement] = useState(false);
+  const [sourceLots, setSourceLots] = useState([]);
+  const [selectedLotIds, setSelectedLotIds] = useState([]);
   const [notes, setNotes] = useState('');
 
   const [error, setError] = useState('');
@@ -50,22 +53,30 @@ export default function EPTransferModal({
       dbAction('suppliers:get-one', { id: fromPartyId }).then(res => {
         if (!res) {
           setAvailableEP(0);
+          setSourceLots([]);
           return;
         }
         const s = res.summary || {};
         if (transferType === 'store_in') {
-          const openEP = Number(s.openingStorageEP) || 0;
-          const arrEP = (res.arrivals || [])
+          const lots = (res.arrivals || [])
             .filter(a => a.product === product && (a.status === 'storage' || a.status === 'partial_settled'))
-            .reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0)), 0);
-          setAvailableEP(openEP + arrEP);
+            .slice()
+            .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+          setSourceLots(lots);
+          const openEP = Number(s.openingStorageEP) || 0;
+          const legacyOut = (res.dispatches || [])
+            .filter(d => d.transferId && d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'))
+            .reduce((sum, d) => sum + (d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : Number(d.endProductWeight || d.weight || 0)), 0);
+          const arrEP = lots.reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : Number(a.endProductWeight || 0)), 0);
+          setAvailableEP(Math.max(0, openEP + arrEP - legacyOut));
         } else {
-          const dispEP = (res.dispatches || [])
-            .filter(d => d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'))
-            .reduce((sum, d) => sum + Number(d.endProductWeight || d.weight || 0), 0);
+          const lots = (res.dispatches || [])
+            .filter(d => !d.transferId && d.product === product && (d.status === 'storage_out' || d.rateType === 'storage_out'));
+          setSourceLots(lots);
+          const dispEP = lots.reduce((sum, d) => sum + (d.remainingEndProduct !== undefined ? Number(d.remainingEndProduct) : Number(d.endProductWeight || d.weight || 0)), 0);
           setAvailableEP(dispEP);
         }
-      }).catch(() => setAvailableEP(0)).finally(() => setCheckingStock(false));
+      }).catch(() => { setAvailableEP(0); setSourceLots([]); }).finally(() => setCheckingStock(false));
     } else {
       setAvailableEP(null);
     }
@@ -73,11 +84,6 @@ export default function EPTransferModal({
 
   const handleBagsChange = (val) => {
     setBags(val);
-    const b = parseFloat(val);
-    if (!isNaN(b) && b > 0) {
-      if (!weight) setWeight(String(b * 50));
-      if (!endProductWeight) setEndProductWeight(String(b * 50));
-    }
   };
 
   const handleWeightChange = (val) => {
@@ -90,9 +96,9 @@ export default function EPTransferModal({
 
   const numBags = parseFloat(bags) || 0;
   const numWeight = parseFloat(weight) || 0;
-  const numEP = parseFloat(endProductWeight) || numWeight;
-  const numRate = parseFloat(rate) || 0;
-  const transferValue = Math.round((numEP * numRate) * 100) / 100;
+  const numEP = parseFloat(endProductWeight) || 0;
+  const numRate = moneyMovement ? (parseFloat(rate) || 0) : 0;
+  const transferValue = moneyMovement ? Math.round((numEP * numRate) * 100) / 100 : 0;
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -127,9 +133,11 @@ export default function EPTransferModal({
         date,
         product,
         bags: numBags,
-        weight: numWeight,
+        weight: numWeight > 0 ? numWeight : undefined,
         endProductWeight: numEP,
         rate: numRate,
+        moneyMovement,
+        lotIds: selectedLotIds.length ? selectedLotIds : undefined,
         notes
       });
 
@@ -267,6 +275,28 @@ export default function EPTransferModal({
             />
           </div>
 
+          {sourceLots.length > 0 && (
+            <div className="form-group">
+              <label className="form-label">Source lots (oldest first if none selected)</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '140px', overflow: 'auto' }}>
+                {sourceLots.map(lot => {
+                  const rem = lot.remainingEndProduct !== undefined ? Number(lot.remainingEndProduct) : Number(lot.endProductWeight || 0);
+                  const checked = selectedLotIds.includes(lot.id);
+                  return (
+                    <label key={lot.id} style={{ fontSize: '0.78rem', display: 'flex', gap: '0.4rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => setSelectedLotIds(prev => checked ? prev.filter(id => id !== lot.id) : prev.concat(lot.id))}
+                      />
+                      <span>{lot.arrivalNo || lot.dispatchNo || lot.id} · {lot.date} · {rem.toLocaleString()} kg EP</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Transfer Quantities */}
           <div className="form-grid-3" style={{ marginTop: '0.5rem' }}>
             <div className="form-group">
@@ -281,7 +311,7 @@ export default function EPTransferModal({
             </div>
 
             <div className="form-group">
-              <label className="form-label">Bags Count</label>
+              <label className="form-label">Bags Count (not converted to kg)</label>
               <input
                 type="number"
                 step="any"
@@ -325,17 +355,21 @@ export default function EPTransferModal({
           {/* Rate & Notes */}
           <div className="form-grid-2" style={{ marginTop: '0.5rem' }}>
             <div className="form-group">
-              <label className="form-label">Agreed Transfer Valuation Rate (₹/kg optional)</label>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <input type="checkbox" checked={moneyMovement} onChange={e => setMoneyMovement(e.target.checked)} />
+                Post optional money movement
+              </label>
               <input
                 type="number"
                 step="any"
                 className="form-control num-input"
-                placeholder="₹ 0 if pure stock transfer"
+                placeholder="₹/kg only if money movement is on"
                 value={rate}
+                disabled={!moneyMovement}
                 onChange={(e) => setRate(e.target.value)}
               />
               <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
-                {transferValue > 0 ? `Posts financial value: ₹${transferValue.toLocaleString('en-IN')}` : 'Pure EP stock balance transfer (₹0 financial bill)'}
+                {moneyMovement ? `Posts ledger value ₹${transferValue.toLocaleString('en-IN')} without billing the destination lot.` : 'Stock only. No money is posted. Destination gets a rate-0 storage arrival.'}
               </small>
             </div>
 

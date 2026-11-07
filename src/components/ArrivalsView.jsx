@@ -39,10 +39,12 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [summary, setSummary] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
 
   useEffect(() => {
     loadArrivalsData();
-  }, [startDate, endDate, dataVersion]);
+  }, [startDate, endDate, dataVersion, searchTerm, productFilter, statusFilter, currentPage, pageSize]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -84,11 +86,28 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
     try {
       const [mets, arrs] = await Promise.all([
         dbAction('dashboard:metrics', { startDate, endDate }),
-        dbAction('arrivals:get', { startDate, endDate })
+        dbAction('arrivals:get', {
+          startDate,
+          endDate,
+          search: searchTerm || undefined,
+          product: productFilter !== 'ALL' ? productFilter : undefined,
+          status: statusFilter !== 'ALL' ? statusFilter : undefined,
+          page: currentPage,
+          limit: pageSize,
+          includeSummary: true
+        })
       ]);
       if (mets) setMetrics(mets);
-      const list = Array.isArray(arrs) ? arrs : (arrs?.items || []);
-      setArrivals(list);
+      if (arrs && Array.isArray(arrs.items)) {
+        setArrivals(arrs.items);
+        setTotalCount(arrs.totalCount || 0);
+        setSummary(arrs.summary || null);
+      } else {
+        const list = Array.isArray(arrs) ? arrs : [];
+        setArrivals(list);
+        setTotalCount(list.length);
+        setSummary(null);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -96,7 +115,7 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
     }
   };
 
-  const handleExportDailyCsv = () => {
+  const handleExportDailyCsv = async () => {
     const headers = [
       { key: 'arrivalNo', label: 'Arrival #' },
       { key: 'date', label: 'Date' },
@@ -116,7 +135,15 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
       { key: 'remarks', label: 'Remarks' },
     ];
 
-    exportToCsv(`Arrivals_Report_${startDate || 'all'}_to_${endDate || 'all'}`, headers, filteredArrivals);
+    const full = await dbAction('arrivals:get', {
+      startDate,
+      endDate,
+      search: searchTerm || undefined,
+      product: productFilter !== 'ALL' ? productFilter : undefined,
+      status: statusFilter !== 'ALL' ? statusFilter : undefined
+    });
+    const rows = Array.isArray(full) ? full : (full?.items || filteredArrivals);
+    exportToCsv(`Arrivals_Report_${startDate || 'all'}_to_${endDate || 'all'}`, headers, rows);
   };
 
   const handleDeleteArrival = async (arr) => {
@@ -149,7 +176,8 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
     return Array.from(set);
   }, [dbProducts, arrivals]);
 
-  const filteredArrivals = arrivals.filter(a => {
+  const serverPaged = !!summary;
+  const filteredArrivals = serverPaged ? arrivals : arrivals.filter(a => {
     const term = searchTerm.toLowerCase();
     const matchSearch = 
       (a.arrivalNo && a.arrivalNo.toLowerCase().includes(term)) ||
@@ -174,26 +202,26 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
   const secondaryArrivals = filteredArrivals.filter(a =>  isSecArr(a));
 
   // Main product metrics
-  const mainInwardRawWeight = mainArrivals.reduce((sum, a) => sum + (Number(a.weight) || 0), 0);
-  const mainInwardBags      = mainArrivals.reduce((sum, a) => sum + (Number(a.bags) || 0), 0);
-  const mainInwardEP        = mainArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
+  const mainInwardRawWeight = serverPaged ? summary.main.rawWeight : mainArrivals.reduce((sum, a) => sum + (Number(a.weight) || 0), 0);
+  const mainInwardBags      = serverPaged ? summary.main.bags : mainArrivals.reduce((sum, a) => sum + (Number(a.bags) || 0), 0);
+  const mainInwardEP        = serverPaged ? summary.main.endProduct : mainArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
   const mainPendingArrivals = mainArrivals.filter(a => a.status === 'storage' || a.status === 'partial_settled');
-  const mainPendingEP       = mainPendingArrivals.reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : (Number(a.endProductWeight) || 0)), 0);
+  const mainPendingEP       = serverPaged ? summary.main.pendingEp : mainPendingArrivals.reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : (Number(a.endProductWeight) || 0)), 0);
   const mainBilledArrivals  = mainArrivals.filter(a => a.status === 'billed' || a.status === 'cash_bill');
-  const mainBilledEP        = mainBilledArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
-  const mainBilledValue     = mainBilledArrivals.reduce((sum, a) => sum + (Number(a.netAmount) || Number(a.billAmount) || 0), 0);
-  const mainAvgRate         = mainBilledEP > 0 ? (mainBilledValue / mainBilledEP).toFixed(2) : '0';
+  const mainBilledEP        = serverPaged ? summary.main.billedEp : mainBilledArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
+  const mainBilledValue     = serverPaged ? summary.main.billedValue : mainBilledArrivals.reduce((sum, a) => sum + (Number(a.netAmount) || Number(a.billAmount) || 0), 0);
+  const mainAvgRate         = serverPaged ? summary.main.avgRate : (mainBilledEP > 0 ? (mainBilledValue / mainBilledEP).toFixed(2) : '0');
 
   // Secondary product metrics
-  const secondaryInwardRawWeight = secondaryArrivals.reduce((sum, a) => sum + (Number(a.weight) || 0), 0);
-  const secondaryInwardBags      = secondaryArrivals.reduce((sum, a) => sum + (Number(a.bags) || 0), 0);
-  const secondaryInwardEP        = secondaryArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
+  const secondaryInwardRawWeight = serverPaged ? summary.secondary.rawWeight : secondaryArrivals.reduce((sum, a) => sum + (Number(a.weight) || 0), 0);
+  const secondaryInwardBags      = serverPaged ? summary.secondary.bags : secondaryArrivals.reduce((sum, a) => sum + (Number(a.bags) || 0), 0);
+  const secondaryInwardEP        = serverPaged ? summary.secondary.endProduct : secondaryArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
   const secPendingArrivals = secondaryArrivals.filter(a => a.status === 'storage' || a.status === 'partial_settled');
-  const secondaryPendingEP = secPendingArrivals.reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : (Number(a.endProductWeight) || 0)), 0);
+  const secondaryPendingEP = serverPaged ? summary.secondary.pendingEp : secPendingArrivals.reduce((sum, a) => sum + (a.remainingEndProduct !== undefined ? Number(a.remainingEndProduct) : (Number(a.endProductWeight) || 0)), 0);
   const secBilledArrivals  = secondaryArrivals.filter(a => a.status === 'billed' || a.status === 'cash_bill');
-  const secondaryBilledEP  = secBilledArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
-  const secondaryBilledValue = secBilledArrivals.reduce((sum, a) => sum + (Number(a.netAmount) || Number(a.billAmount) || 0), 0);
-  const secondaryAvgRate   = secondaryBilledEP > 0 ? (secondaryBilledValue / secondaryBilledEP).toFixed(2) : '0';
+  const secondaryBilledEP  = serverPaged ? summary.secondary.billedEp : secBilledArrivals.reduce((sum, a) => sum + (Number(a.endProductWeight) || 0), 0);
+  const secondaryBilledValue = serverPaged ? summary.secondary.billedValue : secBilledArrivals.reduce((sum, a) => sum + (Number(a.netAmount) || Number(a.billAmount) || 0), 0);
+  const secondaryAvgRate   = serverPaged ? summary.secondary.avgRate : (secondaryBilledEP > 0 ? (secondaryBilledValue / secondaryBilledEP).toFixed(2) : '0');
 
   // Legacy totals (for combined cards)
   const pendingBilledRawWeight = [...mainPendingArrivals, ...secPendingArrivals].reduce((sum, a) => sum + (a.remainingBags !== undefined ? Number(a.remainingBags) * 50 : (Number(a.weight) || 0)), 0);
@@ -362,7 +390,7 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
             <div className="card-title" style={{ fontSize: '1rem' }}>
               <Truck size={18} color="#2563eb" />
               <span>Inward Arrival Entries</span>
-              <span className="badge badge-blue">{filteredArrivals.length}</span>
+              <span className="badge badge-blue">{serverPaged ? totalCount : filteredArrivals.length}</span>
             </div>
 
             {/* Searchable Commodity Filter */}
@@ -437,15 +465,14 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
             <tbody>
               {loading ? (
                 <tr><td colSpan="16" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>Loading arrivals...</td></tr>
-              ) : filteredArrivals.length === 0 ? (
+              ) : (serverPaged ? totalCount : filteredArrivals.length) === 0 ? (
                 <tr>
                   <td colSpan="16" style={{ textAlign: 'center', padding: '2.5rem', color: '#64748b' }}>
                     No arrivals recorded for this filter. Click <strong>+ New Arrival (Alt+A)</strong> to add.
                   </td>
                 </tr>
               ) : (
-                filteredArrivals
-                  .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                (serverPaged ? arrivals : filteredArrivals.slice((currentPage - 1) * pageSize, currentPage * pageSize))
                   .map(a => {
                     const gross = Number(a.billAmount) || Number(a.taxableAmount) || 0;
                     const tds = Number(a.tdsAmount) || 0;
@@ -553,7 +580,7 @@ export default function ArrivalsView({ onOpenNewArrival, onEditArrival, onSelect
             </tbody>
           </table>
         </div>
-        {renderPaginationControls(filteredArrivals.length)}
+        {renderPaginationControls(serverPaged ? totalCount : filteredArrivals.length)}
       </div>
     </div>
   );

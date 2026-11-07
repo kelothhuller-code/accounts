@@ -124,7 +124,7 @@ export default function SearchableProductSelect({
         defaultOutturnType: newDefaultOutturnType,
         cgstRate: numCgst,
         sgstRate: numSgst,
-        igstRate: numCgst + numSgst,
+        igstRate: numCgst + numSgst, // interstate alternative only; bills apply intra or inter, never both
         hsnCode: newHsnCode.trim(),
         description: newDescription.trim()
       });
@@ -292,7 +292,7 @@ export default function SearchableProductSelect({
                         </span>
                       </div>
                       <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.1rem' }}>
-                        {isEnd ? `☕ Outturn ${p.defaultOutturn || 26}kg/50kg` : '🏷️ Direct Weight'} • GST: {(Number(p.cgstRate) || 0) + (Number(p.sgstRate) || 0)}%
+                        {isEnd ? `☕ Outturn ${p.defaultOutturn || 26}kg/50kg` : '🏷️ Direct Weight'} • Intra GST {(Number(p.cgstRate) || 0) + (Number(p.sgstRate) || 0)}% (or IGST alternative)
                       </div>
                     </div>
                     {isSelected && <Check size={16} color="#2563eb" />}
