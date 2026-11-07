@@ -827,28 +827,29 @@ export default function DispatchEntryModal({
             {returns.length > 0 && (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
                 gap: '0.5rem',
                 background: '#fff',
                 padding: '0.6rem',
                 borderRadius: '6px',
                 border: '1px solid #ffe4e6',
                 marginBottom: '0.75rem',
-                textAlign: 'center'
+                textAlign: 'center',
+                boxSizing: 'border-box'
               }}>
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Original Delivered</div>
                   <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>
                     {(Number(originalWeight) || (numWeight + totalReturnedWeight)).toLocaleString()} kg
                   </div>
                 </div>
-                <div style={{ borderLeft: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9' }}>
+                <div style={{ borderLeft: '1px solid #f1f5f9', borderRight: '1px solid #f1f5f9', minWidth: 0 }}>
                   <div style={{ fontSize: '0.7rem', color: '#e11d48', fontWeight: 600, textTransform: 'uppercase' }}>Total Returned</div>
                   <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#e11d48' }}>
                     - {totalReturnedWeight.toLocaleString()} kg ({totalReturnedBags} b)
                   </div>
                 </div>
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 600, textTransform: 'uppercase' }}>Net Active Balance</div>
                   <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#059669' }}>
                     = {numWeight.toLocaleString()} kg ({numBags} b)
@@ -898,21 +899,26 @@ export default function DispatchEntryModal({
               </div>
             )}
 
-            {/* New Return Form Input Row */}
+            {/* New Return Form Input Rows */}
             {showAddReturn && (
               <div style={{
                 background: '#fff',
-                border: '1px dashed #f43f5e',
+                border: '1.5px dashed #f43f5e',
                 borderRadius: '6px',
-                padding: '0.75rem',
-                marginTop: '0.5rem'
+                padding: '0.85rem',
+                marginTop: '0.65rem',
+                boxSizing: 'border-box',
+                width: '100%'
               }}>
-                <div style={{ fontWeight: 700, fontSize: '0.78rem', color: '#9f1239', marginBottom: '0.4rem' }}>
-                  Record New Return / Rejected Quantity
+                <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#9f1239', marginBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span>↩️</span>
+                  <span>Record New Return / Rejected Quantity</span>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr 1fr 0.8fr 1.6fr auto', gap: '0.5rem', alignItems: 'end' }}>
+
+                {/* Row 1: Date, Vehicle, Weight, Bags */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.65rem' }}>
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Return Date</label>
+                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Return Date</label>
                     <input
                       type="date"
                       className="form-control form-control-sm"
@@ -921,7 +927,7 @@ export default function DispatchEntryModal({
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Return Vehicle</label>
+                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Return Vehicle</label>
                     <input
                       type="text"
                       className="form-control form-control-sm"
@@ -931,7 +937,7 @@ export default function DispatchEntryModal({
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: '#b91c1c', fontWeight: 600, display: 'block', marginBottom: '2px' }}>Return Wt (kg) *</label>
+                    <label style={{ fontSize: '0.72rem', color: '#b91c1c', fontWeight: 700, display: 'block', marginBottom: '2px' }}>Return Wt (kg) *</label>
                     <input
                       type="number"
                       step="any"
@@ -948,7 +954,7 @@ export default function DispatchEntryModal({
                     />
                   </div>
                   <div>
-                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Bags</label>
+                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Bags (Wt ÷ 50)</label>
                     <input
                       type="number"
                       step="any"
@@ -958,24 +964,36 @@ export default function DispatchEntryModal({
                       onChange={e => setNewReturnBags(e.target.value)}
                     />
                   </div>
-                  <div>
-                    <label style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginBottom: '2px' }}>Reason / Notes</label>
+                </div>
+
+                {/* Row 2: Reason & Action Buttons */}
+                <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'flex-end', marginTop: '0.6rem' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <label style={{ fontSize: '0.72rem', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Reason / Notes</label>
                     <input
                       type="text"
                       className="form-control form-control-sm"
-                      placeholder="e.g. Excess / Quality reject"
+                      placeholder="e.g. Excess dispatch returned / quality rejected"
                       value={newReturnReason}
                       onChange={e => setNewReturnReason(e.target.value)}
                     />
                   </div>
-                  <div>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                      onClick={() => setShowAddReturn(false)}
+                    >
+                      Cancel
+                    </button>
                     <button
                       type="button"
                       className="btn btn-sm btn-danger"
-                      style={{ padding: '0.35rem 0.75rem', fontWeight: 600, fontSize: '0.75rem' }}
+                      style={{ padding: '0.35rem 0.85rem', fontWeight: 700, fontSize: '0.75rem' }}
                       onClick={handleAddReturn}
                     >
-                      Apply Return
+                      ✓ Apply Return
                     </button>
                   </div>
                 </div>
