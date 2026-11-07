@@ -1857,6 +1857,16 @@ const dbController = {
     for (const pay of (dbState.payments || [])) {
       await MongoPayment.findOneAndUpdate({ id: pay.id }, pay, { upsert: true });
     }
+    if (MongoPartyBill) {
+      for (const bill of (dbState.partyBills || [])) {
+        await MongoPartyBill.findOneAndUpdate({ id: bill.id }, bill, { upsert: true });
+      }
+    }
+    if (MongoBalanceAdjustment) {
+      for (const adj of (dbState.balanceAdjustments || [])) {
+        await MongoBalanceAdjustment.findOneAndUpdate({ id: adj.id }, adj, { upsert: true });
+      }
+    }
     for (const trf of (dbState.epTransfers || [])) {
       await MongoEpTransfer.findOneAndUpdate({ id: trf.id }, trf, { upsert: true });
     }
@@ -1894,8 +1904,6 @@ const dbController = {
         payments: (dbState.payments || []).length,
         partyBills: (dbState.partyBills || []).length,
         balanceAdjustments: (dbState.balanceAdjustments || []).length,
-        partyBills: (dbState.partyBills || []).length,
-        balanceAdjustments: (dbState.balanceAdjustments || []).length,
         products: (dbState.products || []).length
       }
     };
@@ -1919,6 +1927,8 @@ const dbController = {
         commitments: (dbState.commitments || []).length,
         settlements: (dbState.settlements || []).length,
         payments: (dbState.payments || []).length,
+        partyBills: (dbState.partyBills || []).length,
+        balanceAdjustments: (dbState.balanceAdjustments || []).length,
         products: (dbState.products || []).length
       }
     };
