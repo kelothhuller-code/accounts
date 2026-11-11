@@ -1446,6 +1446,7 @@ async function syncWithMongo() {
     }
 
     deduplicateSuppliersInDb();
+    reconcileCommitmentProgressInDb();
     saveLocalDb();
   } catch (err) {
     console.error('Error syncing with MongoDB:', err);
