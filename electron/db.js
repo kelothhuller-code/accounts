@@ -2746,7 +2746,7 @@ const dbController = {
     }
 
     const weight = data.weight !== undefined ? Number(data.weight) : arr.weight;
-    const bags = data.bags !== undefined ? Number(data.bags) : (weight > 0 ? Math.round((weight / 50) * 100) / 100 : 0);
+    const bags = data.bags !== undefined ? Number(data.bags) : (arr.bags !== undefined ? arr.bags : (weight > 0 ? Math.round((weight / 50) * 100) / 100 : 0));
     const outturn = data.outturn !== undefined ? Number(data.outturn) : arr.outturn;
     const outturnType = data.outturnType || arr.outturnType || 'per_50kg';
 
