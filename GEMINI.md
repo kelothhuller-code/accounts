@@ -21,3 +21,7 @@
 5. **Coffee Husk Rules:**
    - Always Coffee Husk outward sale (`dispatchType: 'husk'`).
    - CGST/SGST 2.5% each (5% total). No 0.1% TDS/TCS on husk bills.
+
+6. **Mandatory Cloud Synchronization ("Push to Cloud Always"):**
+   - Always pull latest cloud data before processing any transaction.
+   - Always push and dual-write to MongoDB Cloud immediately after every database modification (arrivals, dispatches, settlements, commitments, payments), and verify that local and cloud databases are 100% identical.
