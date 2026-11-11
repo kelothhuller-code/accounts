@@ -25,3 +25,10 @@ dist-electron
 scratch/
 data/backups/
 
+# Mobile Remote Control & Credentials
+mobile_auth.json
+bin/
+scripts/mobile_*
+scripts/marked.min.js
+
+

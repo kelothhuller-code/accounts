@@ -124,10 +124,12 @@ function loadLocalDb() {
       });
 
       rebuildProductIndices();
+      reconcileCommitmentProgressInDb();
       saveLocalDb();
       console.log('Local DB store loaded successfully. Suppliers:', dbState.suppliers.length, 'Products:', dbState.products.length);
     } else {
       rebuildProductIndices();
+      reconcileCommitmentProgressInDb();
       saveLocalDb();
     }
   } catch (err) {
@@ -1224,6 +1226,66 @@ async function bulkUpsert(Model, items, chunkSize = 500) {
   }
 }
 
+function reconcileCommitmentProgressInDb() {
+  if (!dbState.commitments || !dbState.settlements) return;
+  let updated = false;
+
+  for (let i = 0; i < dbState.commitments.length; i++) {
+    const c = dbState.commitments[i];
+    if (!c || c.status === 'closed') continue;
+
+    const linkedSets = (dbState.settlements || []).filter(s => s.commitmentId === c.id);
+    const linkedArrs = (dbState.arrivals || []).filter(a => a.commitmentId === c.id && a.status === 'billed');
+    const linkedDisps = (dbState.dispatches || []).filter(d => d.commitmentId === c.id && d.status === 'billed');
+    const linkedWashes = (dbState.commitmentWashes || []).filter(w => w.purchaseCommitmentId === c.id || w.saleCommitmentId === c.id);
+
+    if (linkedSets.length === 0 && linkedArrs.length === 0 && linkedDisps.length === 0 && linkedWashes.length === 0) {
+      continue;
+    }
+
+    let setQty = 0;
+    for (const s of linkedSets) {
+      setQty += c.type === 'bags' ? (Number(s.settledBags) || 0) : (c.type === 'weight' ? (Number(s.settledWeight) || 0) : (Number(s.settledEndProduct) || 0));
+    }
+    for (const a of linkedArrs) {
+      setQty += c.type === 'bags' ? (Number(a.bags) || 0) : (c.type === 'weight' ? (Number(a.weight) || 0) : (Number(a.endProductWeight) || 0));
+    }
+    for (const d of linkedDisps) {
+      setQty += c.type === 'bags' ? (Number(d.bags) || 0) : (c.type === 'weight' ? (Number(d.weight) || 0) : (Number(d.endProductWeight) || 0));
+    }
+    for (const w of linkedWashes) {
+      setQty += Number(w.quantityWashed) || 0;
+    }
+
+    const totalExec = Math.round(setQty * 100) / 100;
+    const qty = Number(c.quantity) || 0;
+    const curFul = Number(c.fulfilledQty) || 0;
+
+    if (totalExec > curFul || (c.status === 'active' && totalExec >= qty && qty > 0)) {
+      const newFul = Math.max(curFul, totalExec);
+      const newRem = Math.max(0, Math.round((qty - newFul) * 100) / 100);
+      const isFulfilled = newRem <= 0.001 || (qty > 0 && (totalExec / qty) >= 0.98);
+      const targetStatus = c.status === 'washed' ? 'washed' : (isFulfilled ? 'completed' : 'active');
+
+      dbState.commitments[i] = {
+        ...c,
+        fulfilledQty: isFulfilled && newRem <= 0.001 ? qty : newFul,
+        remainingQty: isFulfilled ? 0 : newRem,
+        status: targetStatus,
+        updatedAt: Date.now()
+      };
+      if (cloudSyncEnabled() && MongoCommitment) {
+        MongoCommitment.findOneAndUpdate({ id: c.id }, dbState.commitments[i], { upsert: true }).catch(e => console.error(e));
+      }
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    saveLocalDb();
+  }
+}
+
 async function loadFromMongo() {
   if (!isMongoConnected) return;
   try {
@@ -1277,6 +1339,7 @@ async function loadFromMongo() {
 
     deduplicateSuppliersInDb();
     rebuildProductIndices();
+    reconcileCommitmentProgressInDb();
     saveLocalDb();
     console.log('Local cache cleanly reloaded from MongoDB collections.');
   } catch (err) {
@@ -1288,6 +1351,7 @@ async function syncWithMongo() {
   if (!isMongoConnected) return;
   try {
     deduplicateSuppliersInDb();
+    reconcileCommitmentProgressInDb();
 
     // 1. Bulk upload local data to Mongo in batched network calls
     const syncTasks = [
@@ -2219,6 +2283,7 @@ const dbController = {
   // COMMITMENTS (PURCHASE & SALES)
   getCommitments(supplierId = null) {
     ensureDatabaseReady();
+    reconcileCommitmentProgressInDb();
     let list = dbState.commitments;
     if (supplierId) {
       list = list.filter(c => c.supplierId === supplierId || c.partyId === supplierId);
@@ -2229,9 +2294,17 @@ const dbController = {
   addCommitment(data, shouldSave = true) {
     ensureDatabaseReady();
     const id = 'com_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-    const count = dbState.commitments.length + 1;
     const category = data.category || 'purchase'; // 'purchase' or 'sale'
     const prefix = category === 'sale' ? 'COM-SALE-' : 'COM-PUR-';
+
+    let maxNum = 0;
+    for (const c of (dbState.commitments || [])) {
+      if (c && c.commitmentNo && c.commitmentNo.startsWith(prefix)) {
+        const num = parseInt(c.commitmentNo.replace(prefix, ''), 10);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    }
+    const count = maxNum + 1;
     const commitmentNo = prefix + String(count).padStart(4, '0');
 
     const newCommitment = {
@@ -2340,8 +2413,12 @@ const dbController = {
     const index = dbState.commitments.findIndex(c => c.id === id);
     if (index === -1) throw new Error('Commitment not found');
     const com = dbState.commitments[index];
-    if (com.fulfilledQty > 0) {
-      throw new Error(`Cannot delete commitment ${com.commitmentNo} because ${com.fulfilledQty} ${com.type} has already been fulfilled.`);
+    const hasLinkedSets = (dbState.settlements || []).some(s => s.commitmentId === id);
+    const hasLinkedArrs = (dbState.arrivals || []).some(a => a.commitmentId === id);
+    const hasLinkedDisps = (dbState.dispatches || []).some(d => d.commitmentId === id);
+    const hasLinkedWashes = (dbState.commitmentWashes || []).some(w => w.purchaseCommitmentId === id || w.saleCommitmentId === id);
+    if ((com.fulfilledQty > 0) || hasLinkedSets || hasLinkedArrs || hasLinkedDisps || hasLinkedWashes) {
+      throw new Error(`Cannot delete commitment ${com.commitmentNo} because it has active linked transactions or fulfilled quantity.`);
     }
 
     dbState.commitments.splice(index, 1);
@@ -2436,8 +2513,12 @@ const dbController = {
 
     dbState.commitmentWashes.push(newWash);
     saveLocalDb();
-    if (cloudSyncEnabled() && MongoCommitmentWash) {
-      MongoCommitmentWash.findOneAndUpdate({ id }, newWash, { upsert: true }).catch(e => console.error(e));
+    if (cloudSyncEnabled()) {
+      if (MongoCommitmentWash) MongoCommitmentWash.findOneAndUpdate({ id }, newWash, { upsert: true }).catch(e => console.error(e));
+      if (MongoCommitment) {
+        MongoCommitment.findOneAndUpdate({ id: purchaseCommitmentId }, dbState.commitments[purIdx], { upsert: true }).catch(e => console.error(e));
+        MongoCommitment.findOneAndUpdate({ id: saleCommitmentId }, dbState.commitments[saleIdx], { upsert: true }).catch(e => console.error(e));
+      }
     }
     return newWash;
   },
@@ -2545,8 +2626,12 @@ const dbController = {
           ...com,
           fulfilledQty: Math.round(newFulfilled * 100) / 100,
           remainingQty: Math.round(newRemaining * 100) / 100,
-          status: newRemaining <= 0 ? 'fulfilled' : 'active'
+          status: newRemaining <= 0.001 ? 'completed' : 'active',
+          updatedAt: Date.now()
         };
+        if (shouldSave && cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: commitmentId }, dbState.commitments[comIndex], { upsert: true }).catch(e => console.error(e));
+        }
       }
     }
 
@@ -2766,7 +2851,7 @@ const dbController = {
           status: newRem <= 0.001 ? 'completed' : 'active'
         };
         if (cloudSyncEnabled() && MongoCommitment) {
-          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[oldComIdx]).catch(e => console.error(e));
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[oldComIdx], { upsert: true }).catch(e => console.error(e));
         }
       }
     }
@@ -2784,7 +2869,7 @@ const dbController = {
           status: newRem <= 0.001 ? 'completed' : 'active'
         };
         if (cloudSyncEnabled() && MongoCommitment) {
-          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[newComIdx]).catch(e => console.error(e));
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[newComIdx], { upsert: true }).catch(e => console.error(e));
         }
       }
     }
@@ -2865,8 +2950,12 @@ const dbController = {
           ...com,
           fulfilledQty: Math.round(newFulfilled * 100) / 100,
           remainingQty: Math.round(newRemaining * 100) / 100,
-          status: newRemaining <= 0 ? 'fulfilled' : 'active'
+          status: newRemaining <= 0.001 ? 'completed' : 'active',
+          updatedAt: Date.now()
         };
+        if (cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: arr.commitmentId }, dbState.commitments[comIndex], { upsert: true }).catch(e => console.error(e));
+        }
       }
     }
 
@@ -2950,8 +3039,12 @@ const dbController = {
           ...com,
           fulfilledQty: Math.round(newFulfilled * 100) / 100,
           remainingQty: Math.round(newRemaining * 100) / 100,
-          status: newRemaining <= 0 ? 'fulfilled' : 'active'
+          status: newRemaining <= 0.001 ? 'completed' : 'active',
+          updatedAt: Date.now()
         };
+        if (shouldSave && cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: commitmentId }, dbState.commitments[comIndex], { upsert: true }).catch(e => console.error(e));
+        }
       }
     }
 
@@ -3178,7 +3271,7 @@ const dbController = {
           status: newRem <= 0.001 ? 'completed' : 'active'
         };
         if (cloudSyncEnabled() && MongoCommitment) {
-          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[oldComIdx]).catch(e => console.error(e));
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[oldComIdx], { upsert: true }).catch(e => console.error(e));
         }
       }
     }
@@ -3196,7 +3289,7 @@ const dbController = {
           status: newRem <= 0.001 ? 'completed' : 'active'
         };
         if (cloudSyncEnabled() && MongoCommitment) {
-          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[newComIdx]).catch(e => console.error(e));
+          MongoCommitment.findOneAndUpdate({ id: com.id }, dbState.commitments[newComIdx], { upsert: true }).catch(e => console.error(e));
         }
       }
     }
@@ -3279,8 +3372,12 @@ const dbController = {
           ...com,
           fulfilledQty: Math.round(newFulfilled * 100) / 100,
           remainingQty: Math.round(newRemaining * 100) / 100,
-          status: newRemaining <= 0 ? 'fulfilled' : 'active'
+          status: newRemaining <= 0.001 ? 'completed' : 'active',
+          updatedAt: Date.now()
         };
+        if (cloudSyncEnabled() && MongoCommitment) {
+          MongoCommitment.findOneAndUpdate({ id: disp.commitmentId }, dbState.commitments[comIndex], { upsert: true }).catch(e => console.error(e));
+        }
       }
     }
 
@@ -3425,9 +3522,20 @@ const dbController = {
 
     if (shouldSave) {
       saveLocalDb();
-      if (cloudSyncEnabled() && MongoEpTransfer) {
-        MongoEpTransfer.findOneAndUpdate({ id }, newTransfer, { upsert: true }).catch(e => console.error(e));
+      if (cloudSyncEnabled()) {
+        if (MongoEpTransfer) MongoEpTransfer.findOneAndUpdate({ id }, newTransfer, { upsert: true }).catch(e => console.error(e));
         if (MongoArrival) MongoArrival.findOneAndUpdate({ id: arrivalId }, destArrival, { upsert: true }).catch(e => console.error(e));
+        for (const allocation of (plan.allocations || [])) {
+          if (allocation.lotKind === 'arrival') {
+            const srcArr = (dbState.arrivals || []).find(a => a.id === allocation.lotId);
+            if (srcArr && MongoArrival) MongoArrival.findOneAndUpdate({ id: srcArr.id }, srcArr, { upsert: true }).catch(e => console.error(e));
+          } else if (allocation.lotKind === 'dispatch') {
+            const srcDisp = (dbState.dispatches || []).find(d => d.id === allocation.lotId);
+            if (srcDisp && MongoDispatch) MongoDispatch.findOneAndUpdate({ id: srcDisp.id }, srcDisp, { upsert: true }).catch(e => console.error(e));
+          } else if (allocation.lotKind === 'opening' && MongoSupplier) {
+            MongoSupplier.findOneAndUpdate({ id: fromParty.id }, fromParty, { upsert: true }).catch(e => console.error(e));
+          }
+        }
       }
     }
     return newTransfer;
@@ -3483,10 +3591,24 @@ const dbController = {
     dbState.arrivals = (dbState.arrivals || []).filter(a => a.transferId !== id);
     dbState.epTransfers.splice(index, 1);
     saveLocalDb();
-    if (cloudSyncEnabled() && MongoEpTransfer) {
-      MongoEpTransfer.deleteOne({ id }).catch(e => console.error(e));
-      MongoDispatch.deleteMany({ transferId: id }).catch(e => console.error(e));
-      MongoArrival.deleteMany({ transferId: id }).catch(e => console.error(e));
+    if (cloudSyncEnabled()) {
+      if (MongoEpTransfer) MongoEpTransfer.deleteOne({ id }).catch(e => console.error(e));
+      if (MongoDispatch) MongoDispatch.deleteMany({ transferId: id }).catch(e => console.error(e));
+      if (MongoArrival) MongoArrival.deleteMany({ transferId: id }).catch(e => console.error(e));
+      if (Array.isArray(trf.allocations)) {
+        for (const allocation of trf.allocations) {
+          if (allocation.lotKind === 'arrival') {
+            const srcArr = (dbState.arrivals || []).find(a => a.id === allocation.lotId);
+            if (srcArr && MongoArrival) MongoArrival.findOneAndUpdate({ id: srcArr.id }, srcArr, { upsert: true }).catch(e => console.error(e));
+          } else if (allocation.lotKind === 'dispatch') {
+            const srcDisp = (dbState.dispatches || []).find(d => d.id === allocation.lotId);
+            if (srcDisp && MongoDispatch) MongoDispatch.findOneAndUpdate({ id: srcDisp.id }, srcDisp, { upsert: true }).catch(e => console.error(e));
+          } else if (allocation.lotKind === 'opening' && MongoSupplier) {
+            const party = dbState.suppliers.find(s => s.id === trf.fromPartyId);
+            if (party) MongoSupplier.findOneAndUpdate({ id: party.id }, party, { upsert: true }).catch(e => console.error(e));
+          }
+        }
+      }
     }
     return { success: true, restoredAllocations: (trf.allocations || []).length };
   },
@@ -3674,7 +3796,14 @@ const dbController = {
     const settlementNetAmount = settlementTax.netAmount;
 
     const id = 'set_' + Date.now();
-    const count = dbState.settlements.length + 1;
+    let maxSetNum = 0;
+    for (const s of (dbState.settlements || [])) {
+      if (s && s.settlementNo && s.settlementNo.startsWith('SET-')) {
+        const num = parseInt(s.settlementNo.replace('SET-', ''), 10);
+        if (!isNaN(num) && num > maxSetNum) maxSetNum = num;
+      }
+    }
+    const count = maxSetNum + 1;
     const settlementNo = 'SET-' + String(count).padStart(4, '0');
 
     // Deduct quantities across selected lots proportionately or FIFO
@@ -3729,8 +3858,12 @@ const dbController = {
             settledEndProduct: Math.round(((dbState.dispatches[dIdx].settledEndProduct || 0) + deductEP) * 100) / 100,
             remainingEndProduct: newRemEP,
             status: isItemFullySettled ? 'settled' : 'partial_settled',
-            settlementIds: [...(dbState.dispatches[dIdx].settlementIds || []), id]
+            settlementIds: [...(dbState.dispatches[dIdx].settlementIds || []), id],
+            updatedAt: Date.now()
           };
+          if (cloudSyncEnabled() && MongoDispatch) {
+            MongoDispatch.findOneAndUpdate({ id: item.id }, dbState.dispatches[dIdx], { upsert: true }).catch(e => console.error(e));
+          }
         }
       } else {
         const aIdx = dbState.arrivals.findIndex(a => a.id === item.id);
@@ -3742,8 +3875,12 @@ const dbController = {
             settledEndProduct: Math.round(((dbState.arrivals[aIdx].settledEndProduct || 0) + deductEP) * 100) / 100,
             remainingEndProduct: newRemEP,
             status: isItemFullySettled ? 'settled' : 'partial_settled',
-            settlementIds: [...(dbState.arrivals[aIdx].settlementIds || []), id]
+            settlementIds: [...(dbState.arrivals[aIdx].settlementIds || []), id],
+            updatedAt: Date.now()
           };
+          if (cloudSyncEnabled() && MongoArrival) {
+            MongoArrival.findOneAndUpdate({ id: item.id }, dbState.arrivals[aIdx], { upsert: true }).catch(e => console.error(e));
+          }
         }
       }
     });
@@ -3768,10 +3905,11 @@ const dbController = {
           ...com,
           fulfilledQty: newFulfilled,
           remainingQty: newRem,
-          status: newRem <= 0.001 ? 'completed' : 'active'
+          status: newRem <= 0.001 ? 'completed' : 'active',
+          updatedAt: Date.now()
         };
         if (cloudSyncEnabled() && MongoCommitment) {
-          MongoCommitment.findOneAndUpdate({ id: commitmentId }, dbState.commitments[comIndex]).catch(e => console.error(e));
+          MongoCommitment.findOneAndUpdate({ id: commitmentId }, dbState.commitments[comIndex], { upsert: true }).catch(e => console.error(e));
         }
       }
     }
@@ -3962,8 +4100,12 @@ const dbController = {
             settledEndProduct: 0,
             remainingEndProduct: Math.round(newRemEP * 100) / 100,
             status: 'storage',
-            settlementIds: (arr.settlementIds || []).filter(sid => sid !== id)
+            settlementIds: (arr.settlementIds || []).filter(sid => sid !== id),
+            updatedAt: Date.now()
           };
+          if (cloudSyncEnabled() && MongoArrival) {
+            MongoArrival.findOneAndUpdate({ id: arrId }, dbState.arrivals[aIdx], { upsert: true }).catch(e => console.error(e));
+          }
         }
       });
     }
@@ -3984,8 +4126,12 @@ const dbController = {
             settledEndProduct: 0,
             remainingEndProduct: Math.round(newRemEP * 100) / 100,
             status: 'storage_out',
-            settlementIds: (disp.settlementIds || []).filter(sid => sid !== id)
+            settlementIds: (disp.settlementIds || []).filter(sid => sid !== id),
+            updatedAt: Date.now()
           };
+          if (cloudSyncEnabled() && MongoDispatch) {
+            MongoDispatch.findOneAndUpdate({ id: dispId }, dbState.dispatches[dIdx], { upsert: true }).catch(e => console.error(e));
+          }
         }
       });
     }
@@ -4009,10 +4155,11 @@ const dbController = {
           ...com,
           fulfilledQty: newFulfilled,
           remainingQty: newRem,
-          status: newRem > 0.001 ? 'active' : 'completed'
+          status: newRem > 0.001 ? 'active' : 'completed',
+          updatedAt: Date.now()
         };
         if (cloudSyncEnabled() && MongoCommitment) {
-          MongoCommitment.findOneAndUpdate({ id: st.commitmentId }, dbState.commitments[comIndex]).catch(e => console.error(e));
+          MongoCommitment.findOneAndUpdate({ id: st.commitmentId }, dbState.commitments[comIndex], { upsert: true }).catch(e => console.error(e));
         }
       }
     }

@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-11-07T10:55:27.103Z",
+  "measuredAt": "2026-11-10T18:52:58.015Z",
   "node": "v23.10.0",
   "platform": "darwin",
   "arch": "x64",
@@ -7,63 +7,63 @@
   "runs": [
     {
       "records": 10000,
-      "saveMs": 68.57,
+      "saveMs": 226.07,
       "saveHeapDeltaMb": 7.75,
-      "searchMs": 12.85,
+      "searchMs": 27.85,
       "searchReturned": 25,
       "searchTotal": 589,
-      "reportMs": 5.49,
-      "ledgerMs": 10.14,
+      "reportMs": 22.21,
+      "ledgerMs": 24.54,
       "fileMb": 3.71,
-      "rssMb": 73.98
+      "rssMb": 79.12
     },
     {
       "records": 100000,
-      "saveMs": 258.3,
-      "saveHeapDeltaMb": 40.31,
-      "searchMs": 44.24,
+      "saveMs": 863.16,
+      "saveHeapDeltaMb": 38.8,
+      "searchMs": 133.52,
       "searchReturned": 25,
       "searchTotal": 5883,
-      "reportMs": 14.49,
-      "ledgerMs": 34.07,
+      "reportMs": 48.88,
+      "ledgerMs": 118.64,
       "fileMb": 37.26,
-      "rssMb": 224.82
+      "rssMb": 225.81
     },
     {
       "records": 500000,
-      "saveMs": 1440.04,
-      "saveHeapDeltaMb": 199.91,
-      "searchMs": 185.33,
+      "saveMs": 5150.85,
+      "saveHeapDeltaMb": 202.4,
+      "searchMs": 623.88,
       "searchReturned": 25,
       "searchTotal": 29412,
-      "reportMs": 41.46,
-      "ledgerMs": 178.7,
+      "reportMs": 142.62,
+      "ledgerMs": 593.01,
       "fileMb": 187.14,
-      "rssMb": 540.46
+      "rssMb": 540.37
     }
   ],
   "domainInserts": {
     "count": 500,
-    "elapsedMs": 4.75,
-    "flushMs": 1476.88,
+    "elapsedMs": 18.06,
+    "flushMs": 4151.39,
     "waitedForNetwork": false
   },
   "batches": [
     {
       "count": 100,
-      "insertMs": 2.2,
-      "flushMs": 1233.12,
+      "insertMs": 5.72,
+      "flushMs": 4014.71,
       "waitedForNetwork": false,
-      "rangeReportMs": 139.4,
-      "peakRssMb": 716.44
+      "rangeReportMs": 395.11,
+      "peakRssMb": 716.25
     },
     {
       "count": 1000,
-      "insertMs": 6.16,
-      "flushMs": 1318.89,
+      "insertMs": 23.87,
+      "flushMs": 3910.86,
       "waitedForNetwork": false,
-      "rangeReportMs": 218.92,
-      "peakRssMb": 556.14
+      "rangeReportMs": 510.65,
+      "peakRssMb": 566.16
     }
   ]
 }

@@ -102,6 +102,7 @@ Keep these strictly separated:
 ## 8. Payment Pages & Reconciliation
 - **Formula Check:**
   $$\text{Opening} + \text{Receipts} - \text{Bank Payments} - \text{Cash/UPI Payments} = \text{Closing}$$
+  - **Mandatory Opening Balance Rule:** The written opening balance (and individual bank/cash holding breakdown) **MUST be verified to match the previous confirmed closing balance** down to the rupee before posting any transaction. Any discrepancy between the previous day's confirmed closing and today's written opening must be flagged immediately and investigated.
   - Check that page opening equals the previous confirmed closing.
   - Closing breakdown entries (bank balances, cash in hand, wallet/GPay balances) are holdings, NOT receipts.
   - Red totals are sums, not transactions.
@@ -195,6 +196,7 @@ Never apply a single blanket default. Established party rules:
 ---
 
 ## 15. Pre-Save, Post-Save & Safety Gating
+- **Mandatory Pre-Posting Calculation Check:** Before posting any sheet (Arrivals, Dispatches, Settlements, Husk, Payments), perform an exhaustive, independent calculation check of every single arithmetic operation (gross amounts, outturns, clean EP formulas, tax breakdowns, subtotals, cumulative roll-forwards, and weighted averages). Flag any mathematical mismatch or handwriting ambiguity immediately before saving.
 - **Pre-save:** Validate duplicates (party, date, vehicle, grade, quantity, existing settlements).
 - **Post-save:** Read back and verify status, quantities, rate, taxes, net invoice, commitment deduction, remaining EP, and ledger balance.
 - **Stop & Report:** Never silently retry failed saves, create parties, merge accounts, short-close commitments, write off differences, or overwrite local records.
